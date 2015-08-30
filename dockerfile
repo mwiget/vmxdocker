@@ -11,7 +11,9 @@ RUN apt-get install -y build-essential gcc pkg-config glib-2.0 libglib2.0-dev li
 RUN git clone -b v2.1.0-vhostuser --depth 50 https://github.com/SnabbCo/qemu && \
 	cd qemu && ./configure --target-list=x86_64-softmmu && make -j
 
-# Download and compile Snabb Switch
+# Download and compile Snabb Switch. Using my own fork until pull request #604
+# is resolved: https://github.com/SnabbCo/snabbswitch/pull/604
+#
 # RUN git clone https://github.com/SnabbCo/snabbswitch && cd snabbswitch && make
 RUN git clone https://github.com/mwiget/snabbswitch.git && cd snabbswitch && make
 
