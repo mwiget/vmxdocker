@@ -263,9 +263,9 @@ See [http://docs.docker.com/articles/basics/](http://docs.docker.com/articles/ba
 	The vmx image is now available for launch:
 	
 	```
-	docker images marcelwiget/vmx
+mwiget@va:~$ docker images
 REPOSITORY          TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
-marcelwiget/vmx     latest       c521e20991f5        9 hours ago         2.781 GB
+marcelwiget/vmx     latest              14bcc6fdcb4f        35 minutes ago      432.3 MB
 ```
 
 
