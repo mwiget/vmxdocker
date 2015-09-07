@@ -48,6 +48,7 @@ marcelwiget/vmx     latest              a9c492840cd6        2 hours ago         
 
 ### Running the vMX Container
 
+```
 $ docker run --name vmx1 --rm --privileged --net=host \
   -v $PWD:/u:ro \
   --env TAR="vmx-14.1R5.4-1.tgz" \
@@ -56,6 +57,7 @@ $ docker run --name vmx1 --rm --privileged --net=host \
   --env PFE="lite" \
   --env MEM="5000" --env VCPU="5" \
   -i -t marcelwiget/vmx:latest
+```
 
 --name <name> 
 The name must be unique across containers on the same server (e.g. vmx1)
