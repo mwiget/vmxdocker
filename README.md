@@ -2,28 +2,42 @@
 
 ### Overview
 
-Juniper Networks [vMX](http://www.juniper.net/us/en/products-services/routing/mx-series/vmx/) virtual router can be installed on bare metal servers by running an installation script. A different solution is used here by creating a vmx Docker image that can be instantiated one or more times via docker. Access to Intel 82599 based 10G Ethernet ports is handled via [Snabb Switch](https://github.com/SnabbCo/snabbswitch). 
-One ore more 10G ports can be assigned to a vMX container by providing their PCI addresses via environment variables to 'docker run'.
+Juniper Networks [vMX](http://www.juniper.net/us/en/products-services/routing/mx-series/vmx/) virtual router can be installed on bare metal servers by running an installation script. A different solution is used here by creating a vmx Docker image that can be instantiated one or more times via Docker.
 
-This is a first attempt by me in using Docker and by no means recommended for production use. 
+Each vMX container is given a list of interface, memory and vCPU count as well as an initial "zero touch" config plus an actual vMX distribution tar file (not provided here). 
+The list of interfaces can contain virtual bridges and physical interfaces. The container will create required virtual bridges and attach physical interfaces as needed. Access to Intel 82599 based 10G Ethernet ports is handled via [Snabb Switch](https://github.com/SnabbCo/snabbswitch) by providing their PCI addresses instead of their interface names.
+Based on the CPU's capability, the container runs either the standard or lite vPFE version (though its possible to force the use of the lite version).
+
+This is currently in prototype stage and not recommended for production use. 
 
 ### Requirements
 
-Bare metal linux server with [Docker](https://www.docker.com) installed and one or more Intel 82599 based 10G Ethernet ports. The kernel must have intel_iommu disabled and HugePages reserved by setting the following options in /etc/default/grub:
+- Juniper Networks vMX distribution tar file. Download the latest vMX package from [http://www.juniper.net/support/downloads/?p=vmx#sw](http://www.juniper.net/support/downloads/?p=vmx#sw). A valud user account is required to access and download the file. This file must be made available to the container at startup via a mounted volume.
+- Bare metal linux server with [Docker](https://www.docker.com) installed. Currently tested with Ubuntu 14.04 and 15.04. The kernel must have HugePages reserved by setting the following options in /etc/default/grub:
 
 ```
 # cat /etc/default/grub
 ...
-GRUB_CMDLINE_LINUX_DEFAULT="hugepages=12288 intel_iommu=off"
+GRUB_CMDLINE_LINUX_DEFAULT="hugepages=12000"
 ...
 # update-grub
 # reboot
 ```
 
-The vMX tar file contains virtual images for the routing engine (jinstall64-vmx-*.img), the virtual forwarding engine (vPFE-*.img) and a small disk to store config and log files (vmxhdd.img). These 3 images are needed to build the docker image.
+- Optional one or more Intel 82599 based 10G Ethernet ports. If used, the kernel must also have intel_iommu disabled:
+
+```
+# cat /etc/default/grub
+...
+GRUB_CMDLINE_LINUX_DEFAULT="hugepages=12000 intel_iommu=off"
+...
+# update-grub
+# reboot
+```
 
 Qemu and snabb will get downloaded and compiled during the creation of the vmx docker image, hence there are no requirements on the server itself to have qemu or even developer tools installed.
 
+### Running 
 ### Building the vMX Docker Image
 
 - Clone this repository to the linux server
