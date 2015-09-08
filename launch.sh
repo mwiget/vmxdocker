@@ -1,5 +1,5 @@
 #!/bin/bash
-# 
+#
 echo "Juniper Networks vMX Docker Container (unsupported prototype)"
 echo ""
 
@@ -9,7 +9,7 @@ set -e	#  Exit immediately if a command exits with a non-zero status.
 qemu=/usr/local/bin/qemu-system-x86_64
 snabb=/usr/local/bin/snabb  # only used for Intel 82599 10GE ports
 
-# mount hugetables, remove directory if this isn't possible due 
+# mount hugetables, remove directory if this isn't possible due
 # to lack of privilege level. A check for the diretory is done further down
 mkdir /hugetlbfs && mount -t hugetlbfs none /hugetlbfs || rmdir /hugetlbfs
 
@@ -61,7 +61,7 @@ fi
 
 if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
   echo "Using high performance PFE image (specify --env PFE=\"lite\" otherwise)"
-else 
+else
   echo "Using PFE lite image (remove --env PFE otherwise)"
 fi
 
@@ -176,7 +176,7 @@ function pci_node {
 
 # Create unique 4 digit ID used for this vMX in interface names
 ID=`printf '%02x%02x' $[RANDOM%256] $[RANDOM%256]`
-N=0	# added to each tap interface to make them unique 
+N=0	# added to each tap interface to make them unique
 
 # Check if we run with --net=host or not by checking the existense of
 # the bridge docker0:
@@ -218,7 +218,7 @@ if [ ! -z "$BRMGMT" ]; then
   $(addif_to_bridge $BRMGMT $VFPMGMT)
 fi
 
-port_n=0	# added to each tap interface to make them unique 
+port_n=0	# added to each tap interface to make them unique
 
 # =======================================================
 # check the list of interfaces provided in --env DEV=
@@ -234,11 +234,11 @@ PCIDEVS=""
 echo "Building virtual interfaces and bridges ..."
 
 for DEV in $DEV; do # ============= loop thru interfaces start
-  
+
   # check if we have been given a bridge or interface
   # If its an interface, we need to first create a unique bridge
-  # followed by creating a tap interface and place the tap and 
-  # interface in it. 
+  # followed by creating a tap interface and place the tap and
+  # interface in it.
   # If its a bridge, we simply create a tap interface and add it
   # to the bridge
 
@@ -254,7 +254,7 @@ for DEV in $DEV; do # ============= loop thru interfaces start
     # cool. We got a PCI address. Lets check if its valid
     if [ -L /sys/bus/pci/drivers/ixgbe/$DEV ]; then
       echo "$DEV is a supported Intel 82599-based 10G port."
-      # add $DEV to list 
+      # add $DEV to list
       PCIDEVS="$PCIDEVS $DEV"
       macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
       NETDEVS="$NETDEVS -chardev socket,id=char$port_n,path=./xe$port_n.socket,server \
@@ -299,14 +299,14 @@ EOF
       if [ ! -z "`brctl show $DEV 2>&1 | grep \"No such device\"`" ]; then
         INT=$DEV # nope, we have a physical interface here
         echo "$DEV is a physical interface"
-      else 
+      else
         echo "$DEV is an existing bridge"
         BRIDGE="$DEV"
       fi
     else
       # we know now $DEV is or will be a bridge. Check if it exists
       # already
-      BRIDGE=$DEV   
+      BRIDGE=$DEV
       if [ ! -z "`brctl show $DEV 2>&1 | grep \"No such device\"`" ]; then
         # doesn't exist yet. Lets create it
         echo "need to create bridge $BRIDGE"
@@ -360,7 +360,7 @@ VCPIMAGE="`ls /tmp/vmx-*/images/jinstall64-vmx*img`"
 HDDIMAGE="`ls /tmp/vmx-*/images/vmxhdd.img`"
 VFPIMAGE="`ls /tmp/vmx-*/images/vPFE-lite-*img`"
 
-# This will allow the use of the high performance image if 
+# This will allow the use of the high performance image if
 if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
   VFPIMAGE="`ls /tmp/vmx-*/images/vPFE-2*img`"
 fi
@@ -394,12 +394,15 @@ fi
 tmux_session="vmx$ID"
 
 # Launch Junos Control plane virtual image in the background and
-# connect to the console via telnet port 8008 if we have a config to 
+# connect to the console via telnet port 8008 if we have a config to
 # send to it. Then open a telnet session to the console as the first
 # tmux session, so its the main session a user see's.
 
 macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+vcp_pid="/var/tmp/vcp-$macaddr1.pid"
+vcp_pid=$(echo $vcp_pid | tr ":" "-")
+
 
 RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
   -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE \
@@ -410,7 +413,7 @@ RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
   -device virtio-net-pci,netdev=tc1,mac=$macaddr2 \
   -chardev socket,id=charserial0,host=127.0.0.1,port=8008,telnet,server,nowait \
   -device isa-serial,chardev=charserial0,id=serial0 \
-  -vnc 127.0.0.1:1 -daemonize"
+  -pidfile=/tmp/$vcp_pid -vnc 127.0.0.1:1 -daemonize"
 
 echo "$RUNVCP" > runvcp.sh
 chmod a+rx runvcp.sh
@@ -424,11 +427,11 @@ spawn telnet localhost 8008
 expect "login:"
 EOF
 
-# if we have a config file, use it to log in an set 
+# if we have a config file, use it to log in an set
 if [ -e "/u/$CFG" ]; then
   printf "\033c"  # clear screen
   echo "Using config file /u/$CFG to provision the vMX ..."
-  cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 8008 
+  cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 8008
 fi
 
 tmux new-session -d -n "vcp" -s $tmux_session "telnet localhost 8008"
@@ -437,6 +440,8 @@ tmux new-session -d -n "vcp" -s $tmux_session "telnet localhost 8008"
 
 macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+vfp_pid="/var/tmp/vfp-$macaddr1.pid"
+vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
 # launch snabb drivers, if any
 for file in launch_snabb_xe*.sh
@@ -452,7 +457,7 @@ RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,mem
   -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
   -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
   -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-  -device virtio-net-pci,netdev=tf1,mac=$macaddr2 \
+  -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile=$vfp_pid \
   $NETDEVS -nographic"
 
 echo "$RUNVFP" > runvfp.sh
@@ -469,7 +474,8 @@ tmux attach
 # User terminated tmux, lets kill all VM's too
 
 echo "killing all VM's and snabb drivers ..."
-pkill qemu || true
+kill `cat $vcp_pid` || true
+kill `cat $vfp_pid` || true
 pkill snabb || true
 
 echo "waiting for qemu having terminated ..."
@@ -482,4 +488,3 @@ do
 done
 
 exit  # this will call cleanup, thanks to trap set earlier (hopefully)
-
