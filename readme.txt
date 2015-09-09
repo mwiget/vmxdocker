@@ -140,10 +140,29 @@ them via a virtual bridge br0 (which will be automatically created and destroyed
 
 Example of a single router connecting to 2 10GE ports:
 
-  docker run --name vmx1 --rm --privileged --net=host \
+  $ cat vmx3.cfg
+  root
+  cli
+  conf
+  set interface fxp0.0 family inet address 172.17.42.7/24
+  set system root-authentication plain-text-password
+  juniper1
+  juniper1
+  set system host-name vmx3
+  set system service ssh
+  set system service netconf ssh
+  set interface ge-0/0/0.0 family inet address 10.10.10.1/24
+  set routing-instance R1 instance-type virtual-router
+  set routing-instance R1 interface ge-0/0/0.0
+  set interface ge-0/0/1.0 family inet address 10.10.10.2/24
+  set routing-instance R2 instance-type virtual-router
+  set routing-instance R2 interface ge-0/0/1.0
+  commit and-quit
+
+  docker run --name vmx3 --rm --privileged --net=host \
     -v $PWD:/u:ro \
     --env TAR="vmx-14.1R5.4-1.tgz" \
-    --env CFG="vmx1.cfg" \
+    --env CFG="vmx3.cfg" \
     --env DEV="0000:04:00.0 0000:04:00.1" \
     --env PFE="lite" \
     --env MEM="5000" --env VCPU="5" \
