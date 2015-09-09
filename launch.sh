@@ -74,6 +74,8 @@ function cleanup {
   echo ""
   echo "cleaning up interfaces and bridges ..."
 
+  bash
+
   echo "Removing physical interfaces from bridges ..."
   for INT in $INTS; do
     BRIDGE=`echo "$INT"|cut -d: -f1`
@@ -413,7 +415,7 @@ RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
   -device virtio-net-pci,netdev=tc1,mac=$macaddr2 \
   -chardev socket,id=charserial0,host=127.0.0.1,port=8008,telnet,server,nowait \
   -device isa-serial,chardev=charserial0,id=serial0 \
-  -pidfile=/tmp/$vcp_pid -vnc 127.0.0.1:1 -daemonize"
+  -pidfile $vcp_pid -vnc 127.0.0.1:1 -daemonize"
 
 echo "$RUNVCP" > runvcp.sh
 chmod a+rx runvcp.sh
@@ -457,7 +459,7 @@ RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,mem
   -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
   -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
   -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-  -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile=$vfp_pid \
+  -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
   $NETDEVS -nographic"
 
 echo "$RUNVFP" > runvfp.sh
