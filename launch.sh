@@ -74,8 +74,6 @@ function cleanup {
   echo ""
   echo "cleaning up interfaces and bridges ..."
 
-  bash
-
   echo "Removing physical interfaces from bridges ..."
   for INT in $INTS; do
     BRIDGE=`echo "$INT"|cut -d: -f1`
