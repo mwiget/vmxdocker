@@ -100,6 +100,10 @@ virtual bridges (which will be automatically created) and PCI addresses
 of Intel 82599 based 10 Gigabit Ethernet ports. All interface types can
 be mixed.
 
+--env VCP="<vcp/jinstall*img>"
+Optional. Specify a virtual disk image for the VCP/vRE instead of taking it
+from the TAR file. Can be used to run just the VCP image without any vPFE.
+
 --env PFE="lite"    
 Optional. If set to "lite", the lite version of the vPFE is used, even if
 the CPU would allow the use of the high performance vPFE image from the
