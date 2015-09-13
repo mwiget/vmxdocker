@@ -21,7 +21,7 @@ RUN apt-get install -y --no-install-recommends build-essential git ca-certificat
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* /snabbswitch /qemu
 
-COPY launch.sh readme.txt /
+COPY launch.sh README.md /
 
 ENTRYPOINT ["/launch.sh"]
 

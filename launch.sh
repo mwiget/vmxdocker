@@ -15,7 +15,7 @@ mkdir /hugetlbfs && mount -t hugetlbfs none /hugetlbfs || rmdir /hugetlbfs
 
 # check that we are called with enough privileges and env variables set
 if [ ! -d "/hugetlbfs" -o ! -d "/u" ]; then
-  cat readme.txt
+  cat README.md
   exit 1
 fi
 
