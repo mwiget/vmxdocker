@@ -14,7 +14,7 @@ snabb=/usr/local/bin/snabb  # only used for Intel 82599 10GE ports
 mkdir /hugetlbfs && mount -t hugetlbfs none /hugetlbfs || rmdir /hugetlbfs
 
 # check that we are called with enough privileges and env variables set
-if [ ! -d "/hugetlbfs" -o ! -d "/u" -o -z "$TAR" -o -z "$DEV" ]; then
+if [ ! -d "/hugetlbfs" -o ! -d "/u" ]; then
   cat readme.txt
   exit 1
 fi
@@ -42,9 +42,10 @@ vcpmem=2000
 MEM="${MEM:-5000}"
 VCPU="${VCPU:-5}"
 
-if [ ! -e "/u/$TAR" ]; then
+if [ ! -e "/u/$TAR" -a -z "$VCP" ]; then
   echo "Please set env TAR with a URL to download vmx-<rel>.tgz:"
   echo "docker run .... --env TAR=\"\" ..."
+  echo "or specify a RE/VCP image via --env VCP=<jinstall*.img>"
   echo "You can download the latest release from Juniper Networks at"
   echo "http://www.juniper.net/support/downloads/?p=vmx"
   echo "(Requires authentication)"
@@ -173,6 +174,17 @@ function pci_node {
   esac
 }
 
+function find_free_port {
+# input: first port#, will try the next 100
+  low=$1
+  high=$(($low + 100))
+  while :; do
+    for (( port = low ; port <= high ; port++ )); do
+      netstat -ntpl | grep [0-9]:$port -q || break 2
+    done
+  done
+  echo $port
+}
 
 # Create unique 4 digit ID used for this vMX in interface names
 ID=`printf '%02x%02x' $[RANDOM%256] $[RANDOM%256]`
@@ -348,21 +360,43 @@ echo "BRIDGES: $BRIDGES"
 echo "TAPS:    $TAPS"
 echo "INTS:    $INTS"
 echo "PCIDEVS: $PCIDEVS"
+if [ ! -z "$VFPIMAGE" ]; then
+  echo "=================================="
+  echo "vPFE using ${MEM}MB and $VCPU vCPUs"
+fi
 echo "=================================="
-echo "vPFE using ${MEM}MB and $VCPU vCPUs"
-echo "=================================="
 
-echo -n "extracting VM's from $TAR ... "
-tar -zxf /u/$TAR -C /tmp/ --wildcards vmx*/images/*img
-echo ""
 
-VCPIMAGE="`ls /tmp/vmx-*/images/jinstall64-vmx*img`"
-HDDIMAGE="`ls /tmp/vmx-*/images/vmxhdd.img`"
-VFPIMAGE="`ls /tmp/vmx-*/images/vPFE-lite-*img`"
+if [ ! -z "$TAR" ]; then
+  echo -n "extracting VM's from $TAR ... "
+  tar -zxf /u/$TAR -C /tmp/ --wildcards vmx*/images/*img
+  echo ""
+  HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
+else
+  echo "Creating an empty vmxhdd.img ..."
+  qemu-img create -f qcow2 /tmp/vmxhdd.img 2G
+  HDDIMAGE="/tmp/vmxhdd.img"
+fi
 
-# This will allow the use of the high performance image if
-if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
-  VFPIMAGE="`ls /tmp/vmx-*/images/vPFE-2*img`"
+if [ ! -z "$VCP" ]; then
+  # for now its assumed that providing an image 
+  # via env VCP means we have a 15.1F+ image
+  cp /u/$VCP .
+  VCPIMAGE="$VCP"
+  VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
+  METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
+  if [ ! -z "$METADATAIMAGE" ]; then
+    METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+  else 
+    METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+  fi
+else
+  VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
+  VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img`"
+  # This will allow the use of the high performance image if
+  if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
+    VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img`"
+  fi
 fi
 
 if [ ! -f $VCPIMAGE ]; then
@@ -371,8 +405,7 @@ if [ ! -f $VCPIMAGE ]; then
 fi
 
 if [ ! -f $VFPIMAGE ]; then
-  echo "Can't find vPFE-lite*img in tar file"
-  exit 1
+  echo "WARNING: No vPFE image provided. Running in RE/VCP only mode"
 fi
 
 if [ ! -f $HDDIMAGE ]; then
@@ -383,6 +416,7 @@ fi
 echo "VCP image: $VCPIMAGE"
 echo "VFP image: $VFPIMAGE"
 echo "hdd image: $HDDIMAGE"
+echo "METADATA : $METADATA"
 
 if [ -z "DEV" ]; then
   echo "Please set env DEV with list of interfaces or bridges:"
@@ -390,11 +424,10 @@ if [ -z "DEV" ]; then
   exit 1
 fi
 
-
 tmux_session="vmx$ID"
 
 # Launch Junos Control plane virtual image in the background and
-# connect to the console via telnet port 8008 if we have a config to
+# connect to the console via telnet port $consoleport if we have a config to
 # send to it. Then open a telnet session to the console as the first
 # tmux session, so its the main session a user see's.
 
@@ -403,17 +436,19 @@ macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDO
 vcp_pid="/var/tmp/vcp-$macaddr1.pid"
 vcp_pid=$(echo $vcp_pid | tr ":" "-")
 
+consoleport=$(find_free_port 8700)
+vncdisplay=$(($(find_free_port 5901) - 5900))
 
 RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
-  -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE \
+  -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
   -device e1000,netdev=tc0,mac=$macaddr1 \
   -netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
   -device virtio-net-pci,netdev=tc1,mac=$macaddr2 \
-  -chardev socket,id=charserial0,host=127.0.0.1,port=8008,telnet,server,nowait \
+  -chardev socket,id=charserial0,host=127.0.0.1,port=$consoleport,telnet,server,nowait \
   -device isa-serial,chardev=charserial0,id=serial0 \
-  -pidfile $vcp_pid -vnc 127.0.0.1:1 -daemonize"
+  -pidfile $vcp_pid -vnc 127.0.0.1:$vncdisplay -daemonize"
 
 echo "$RUNVCP" > runvcp.sh
 chmod a+rx runvcp.sh
@@ -423,7 +458,7 @@ chmod a+rx runvcp.sh
 echo "waiting for login prompt ..."
 /usr/bin/expect <<EOF
 set timeout -1
-spawn telnet localhost 8008
+spawn telnet localhost $consoleport
 expect "login:"
 EOF
 
@@ -431,39 +466,42 @@ EOF
 if [ -e "/u/$CFG" ]; then
   printf "\033c"  # clear screen
   echo "Using config file /u/$CFG to provision the vMX ..."
-  cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 8008
+  cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 $consoleport
 fi
 
-tmux new-session -d -n "vcp" -s $tmux_session "telnet localhost 8008"
+tmux new-session -d -n "vcp" -s $tmux_session "telnet localhost $consoleport"
 
 # Launch VFP
+if [ ! -z "$VFPIMAGE" ]; then
 
-macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-vfp_pid="/var/tmp/vfp-$macaddr1.pid"
-vfp_pid=$(echo $vfp_pid | tr ":" "-")
+  macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+  macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+  vfp_pid="/var/tmp/vfp-$macaddr1.pid"
+  vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
-# launch snabb drivers, if any
-for file in launch_snabb_xe*.sh
-do
-  tmux new-window -a -d -n "${file:13:3}" -t $tmux_session ./$file
-done
+  # launch snabb drivers, if any
+  for file in launch_snabb_xe*.sh
+  do
+    tmux new-window -a -d -n "${file:13:3}" -t $tmux_session ./$file
+  done
 
-# we borrow the last $numactl in case of 10G ports. If there wasn't one
-# then this will be simply empty
-RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
-  -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
-  -drive if=ide,file=$VFPIMAGE \
-  -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
-  -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
-  -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-  -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
-  $NETDEVS -nographic"
+  # we borrow the last $numactl in case of 10G ports. If there wasn't one
+  # then this will be simply empty
+  RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
+    -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
+    -drive if=ide,file=$VFPIMAGE \
+    -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
+    -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
+    -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
+    -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
+    $NETDEVS -nographic"
 
-echo "$RUNVFP" > runvfp.sh
-chmod a+rx runvfp.sh
+  echo "$RUNVFP" > runvfp.sh
+  chmod a+rx runvfp.sh
 
-tmux new-window -a -d -n "vfp" -t $tmux_session ./runvfp.sh
+  tmux new-window -a -d -n "vfp" -t $tmux_session ./runvfp.sh
+
+fi
 
 tmux new-window -a -d -n "shell" -t $tmux_session "bash"
 
@@ -478,13 +516,13 @@ kill `cat $vcp_pid` || true
 kill `cat $vfp_pid` || true
 pkill snabb || true
 
-echo "waiting for qemu having terminated ..."
+echo "waiting for vcp qemu to terminate ..."
 while  true;
 do
-  if [ "1" == "`ps ax|grep qemu|wc -l`" ]; then
+  if [ "1" == "`ps ax|grep qemu| grep $vcp_pid|wc -l`" ]; then
     break
   fi
-  sleep 2
+  sleep 1
 done
 
 exit  # this will call cleanup, thanks to trap set earlier (hopefully)
