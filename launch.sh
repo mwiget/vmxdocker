@@ -503,7 +503,8 @@ if [ ! -z "$VFPIMAGE" ]; then
 
 fi
 
-tmux new-window -a -d -n "shell" -t $tmux_session "bash"
+# the following can be useful for debugging 
+#tmux new-window -a -d -n "shell" -t $tmux_session "bash"
 
 # DON'T detach from tmux when running the container! Use docker's ^P^Q to detach
 tmux attach
