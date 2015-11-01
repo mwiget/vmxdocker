@@ -487,6 +487,9 @@ if [ ! -z "$VFPIMAGE" ]; then
 
   # we borrow the last $numactl in case of 10G ports. If there wasn't one
   # then this will be simply empty
+  # TODO: once 15.1 for vMX is released with a fix for --cpu host, add this 
+  # for increased performance. Can't really enable this for 14.1R4.5, because
+  # it will break VFP 
   RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
     -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
     -drive if=ide,file=$VFPIMAGE \
