@@ -285,10 +285,26 @@ EOF
       numactl="numactl --cpunodebind=$node --membind=$node"
       cat > launch_snabb_xe${port_n}.sh <<EOF
 #!/bin/bash
+SNABB=$snabb
+CONFIG=xe${port_n}.cfg
+MAC=$macaddr
+
 while :
 do
-  $numactl $snabb snabbnfv traffic -k 10 -D 0 $DEV xe${port_n}.cfg %s.socket
-  sleep 10
+  # check if there is a snabb binary available in the mounted directory.
+  # use that one if yes
+  if [ -f /u/snabb ]; then
+    SNABB=/u/snabb
+  fi
+  # check if there is a snabb config file in the mounted directory.
+  # If yes, use it and replace the dummy mac with the one assigned to the interface
+  if [ -f /u/\$CONFIG ]; then
+    cp /u/\$CONFIG .
+    sed -i "s/00:00:00:00:00:00/$macaddr/" \$CONFIG
+  fi
+  $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$CONFIG %s.socket
+  echo "waiting 5 seconds before relaunch ..."
+  sleep 5
 done
 
 EOF
