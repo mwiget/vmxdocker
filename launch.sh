@@ -296,6 +296,11 @@ do
   if [ -f /u/snabb ]; then
     SNABB=/u/snabb
   fi
+  # check if there is a lwaftr config in /tmp
+  if [ -f /tmp/lwaftr-xe${port_n}.cfg ]; then
+     cp /tmp/lwaftr-xe${port_n}.cfg \$CONFIG
+     sed -i "s/00:00:00:00:00:00/$macaddr/" \$CONFIG
+  fi
   # check if there is a snabb config file in the mounted directory.
   # If yes, use it and replace the dummy mac with the one assigned to the interface
   if [ -f /u/\$CONFIG ]; then
@@ -395,24 +400,29 @@ else
 fi
 
 if [ ! -z "$VCP" ]; then
-  # for now its assumed that providing an image 
-  # via env VCP means we have a 15.1F+ image
   cp /u/$VCP .
   VCPIMAGE="$VCP"
-  VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
-  METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
-  if [ ! -z "$METADATAIMAGE" ]; then
-    METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-  else 
-    METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-  fi
 else
   VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
+fi
+
+VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
+if [ -z "$VFPIMAGE" ]; then
+  # not a 15.1F image, so lets see if we find the 14.1 based vPFE image ...
   VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img`"
   # This will allow the use of the high performance image if
   if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
     VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img`"
   fi
+fi
+
+# check if we have a metadata image and use it if true
+METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
+if [ ! -z "$METADATAIMAGE" ]; then
+  METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+else 
+  # might help for some engineering builds by passing the same info as given via the metadata disk
+  METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
 fi
 
 if [ ! -f $VCPIMAGE ]; then
@@ -494,6 +504,9 @@ if [ ! -z "$VFPIMAGE" ]; then
   macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
   vfp_pid="/var/tmp/vfp-$macaddr1.pid"
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
+
+  # lwaftr hack. Launch the script that queries the router periodically
+  /check-lwaftr-config.sh &
 
   # launch snabb drivers, if any
   for file in launch_snabb_xe*.sh
