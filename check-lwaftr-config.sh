@@ -1,6 +1,6 @@
 #!/bin/bash
 PASSWORD=lwaftr1
-CFG=vmx.cfg
+CFG=*.cfg
 
 while :
 do

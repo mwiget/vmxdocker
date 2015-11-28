@@ -194,7 +194,17 @@ N=0	# added to each tap interface to make them unique
 # the bridge docker0:
 
 if [ -z "`ifconfig docker0 >/dev/null 2>/dev/null && echo notfound`" ]; then
-  echo "WARNING: Running without --net=host. No network based fxp0 access and only 10GE interfaces supported"
+  # Running without --net=host. Create local bridge for MGMT and place
+  # eth0 in it.
+  BRMGMT="br0"
+  MYIP=`ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p'`
+  GATEWAY=`ip -4 route list 0/0 |cut -d' ' -f3`
+  ip addr flush dev eth0
+  brctl addbr $BRMGMT
+  ip link set $BRMGMT up
+  ip addr add $MYIP/16 dev br0
+  route add default gw $GATEWAY
+  brctl addif $BRMGMT eth0
 else
   BRMGMT="docker0"
 fi
@@ -417,13 +427,39 @@ if [ -z "$VFPIMAGE" ]; then
 fi
 
 # check if we have a metadata image and use it if true
-METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
-if [ ! -z "$METADATAIMAGE" ]; then
-  METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-else 
-  # might help for some engineering builds by passing the same info as given via the metadata disk
-  METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+#METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
+#if [ ! -z "$METADATAIMAGE" ]; then
+#  METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+#else 
+#  # might help for some engineering builds by passing the same info as given via the metadata disk
+##  METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+#fi
+
+mkdir config_drive
+mkdir config_drive/boot
+mkdir config_drive/config
+cat > config_drive/boot/loader.conf <<EOF
+vmtype="0"
+vm_retype="RE-VMX"
+vm_i2cid="0xBAA"
+vm_chassis_i2cid="161"
+vm_instance="0"
+EOF
+if [ -f "/u/$CONFIG" ]; then
+  cp /u/$CONFIG config_drive/config/juniper.conf
 fi
+cd config_drive
+tar zcf vmm-config.tgz *
+rm -rf boot config
+cd ..
+# Create our own metadrive image, so we can use a junos config file
+# 100MB should be enough.
+dd if=/dev/zero of=metadata.img bs=1M count=100
+mkfs.vfat metadata.img
+mount -o loop metadata.img /mnt
+cp config_drive/vmm-config.tgz /mnt
+umount /mnt
+METADATA="-usb -usbdevice disk:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
 
 if [ ! -f $VCPIMAGE ]; then
   echo "Can't find jinstall64-vmx*img in tar file"
@@ -489,7 +525,7 @@ expect "login:"
 EOF
 
 # if we have a config file, use it to log in an set
-if [ -e "/u/$CFG" ]; then
+if [ -f "/u/$CFG" ]; then
   printf "\033c"  # clear screen
   echo "Using config file /u/$CFG to provision the vMX ..."
   cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 $consoleport

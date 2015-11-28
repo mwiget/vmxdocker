@@ -3,7 +3,7 @@ MAINTAINER Marcel Wiget
 
 # Install enough packages to compile snabb and qemu
 RUN apt-get update
-RUN apt-get install -y --no-install-recommends bridge-utils tmux telnet net-tools netcat expect iproute2 numactl
+RUN apt-get install -y --no-install-recommends bridge-utils tmux telnet net-tools netcat expect iproute2 numactl dosfstools
 
 # Download and compile snabb and qemu, then cleanup
 RUN apt-get install -y --no-install-recommends build-essential git ca-certificates \
