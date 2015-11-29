@@ -426,15 +426,6 @@ if [ -z "$VFPIMAGE" ]; then
   fi
 fi
 
-# check if we have a metadata image and use it if true
-#METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
-#if [ ! -z "$METADATAIMAGE" ]; then
-#  METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-#else 
-#  # might help for some engineering builds by passing the same info as given via the metadata disk
-##  METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-#fi
-
 mkdir config_drive
 mkdir config_drive/boot
 mkdir config_drive/config
@@ -459,7 +450,7 @@ mkfs.vfat metadata.img
 mount -o loop metadata.img /mnt
 cp config_drive/vmm-config.tgz /mnt
 umount /mnt
-METADATA="-usb -usbdevice disk:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
+METADATA="-usb -usbdevice disk:format=raw:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
 
 if [ ! -f $VCPIMAGE ]; then
   echo "Can't find jinstall64-vmx*img in tar file"
@@ -480,7 +471,7 @@ echo "VFP image: $VFPIMAGE"
 echo "hdd image: $HDDIMAGE"
 echo "METADATA : $METADATA"
 
-if [ -z "DEV" ]; then
+if [ -z "$DEV" ]; then
   echo "Please set env DEV with list of interfaces or bridges:"
   echo "docker run .... --env DEV=\"eth1 br5 \""
   exit 1
