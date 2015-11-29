@@ -12,7 +12,7 @@ This is currently in prototype stage and not recommended for production use.
 
 ### Requirements
 
-- Juniper Networks vMX distribution tar file. Download the latest vMX package from [http://www.juniper.net/support/downloads/?p=vmx#sw](http://www.juniper.net/support/downloads/?p=vmx#sw). A valud user account is required to access and download the file. This file must be made available to the container at startup via a mounted volume.
+- Juniper Networks vMX distribution tar file. Download the latest vMX package from [http://www.juniper.net/support/downloads/?p=vmx#sw](http://www.juniper.net/support/downloads/?p=vmx#sw). A valid user account is required to access and download the file. This file must be made available to the container at startup via a mounted volume.
 - Bare metal linux server with [Docker](https://www.docker.com) installed. Currently tested with Ubuntu 14.04 and 15.04. The kernel must have HugePages reserved by setting the following options in /etc/default/grub:
 
 ```
@@ -48,14 +48,33 @@ marcelwiget/vmx     latest              a9c492840cd6        2 hours ago         
 
 ### Running the vMX Container
 
+Starting with vMX 15.1F3, its possible to specify a full Junos configuration file that is used during startup via CONFIG. The former CFG variable is still used to pass commands to the CLI after boot, e.g. to enter the license key. See the example vmx1.cfg (though it contains an invalid license key)
+
 ```
 $ docker run --name vmx1 --rm --privileged --net=host \
   -v $PWD:/u:ro \
-  --env TAR="vmx-14.1R5.4-1.tgz" \
+  --env TAR="vmx-15.1F3.11.tgz" \
   --env CFG="vmx1.cfg" \
+  --env CONFIG="vmx1-conf.txt" \
   --env DEV="br0 br0" \
-  --env PFE="lite" \
   --env MEM="5000" --env VCPU="5" \
+  -i -t marcelwiget/vmx:latest
+```
+
+The second example vmx2 launches the first vMX FRS release attached to two Intel 82599 
+based 10G interfaces. The Docker option '--net=host' isn't required here, because the
+10G ports are directly addressed via their PCI addresses and the management interfaces
+of vRE and vPFE are bridged to the eth0 interfaces that Docker connects to the 
+docker0 bridge in the host.
+
+```
+$ docker run --name vmx2 --rm --privileged \
+  -v $PWD:/u:ro \
+  --env TAR="vmx-14.1R5.4-1.tgz" \
+  --env CFG="vmx2.cfg" \
+  --env DEV="0000:05:00.0 0000:05:00.1" \
+  --env PFE="lite" \
+  --env MEM="5000" --env VCPU="3" \
   -i -t marcelwiget/vmx:latest
 ```
 
@@ -86,12 +105,19 @@ source directory can be adjusted as needed.
 Specify the filename of the vMX distribution tar file provided in /u to
 the container (see --v option)
 
+--env CONFIG="<filename>"    
+Optional. Specify a config file to be loaded at startup. Requires 
+Junos Release 15.1F3 or higher. A metadata drive is built, containing the 
+specified configuration file and added to the vRE at boot time. 
+
 --env CFG="<filename>"    
 Optional. Specify a config file that allows zero-touch provisioning of
 the vMX. See an example further down. It is possible to set a license key
 as well, but large configs should be transferred via netconf/ssh, because
 the content of the file is sent to the virtual serial based console with
-a 1 sec delay after each line.
+a 1 sec delay after each line. For Junos releases 15.1F3 and higher it is
+recommended to just use this CFG option to set a license key and use 
+the CONFIG option to pass a full Junos configuration file.
 
 --env DEV="<int1> <int2> ... <intN>"    
 Space separated ordered list interface list given to the vMX. Possible
@@ -232,7 +258,7 @@ This example assumes a back-to-back cable to be connected between both ports.
 Launch the vMX as follows:
 
 ```
-  docker run --name vmx3 --rm --privileged --net=host \
+  docker run --name vmx3 --rm --privileged \
     -v $PWD:/u:ro \
     --env TAR="vmx-14.1R5.4-1.tgz" \
     --env CFG="vmx3.cfg" \

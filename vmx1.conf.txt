@@ -1,0 +1,72 @@
+## Last commit: 2015-11-10 11:42:21 UTC by mwiget
+version 15.1F3.11;
+system {
+    host-name vmx;
+    root-authentication {
+        encrypted-password "$5$rNhidzzC$Qy8xe73ZCjBPSYUl8IQLhbLaGvGDyZPx6yV3rwar2i/"; ## SECRET-DATA
+    }
+    login {
+        user mwiget {
+            uid 2001;
+            class super-user;
+            authentication {
+                encrypted-password "$5$qOveA7UK$Bf0Iq5fc9RhOGs6b/5bAshsLtb13.GOC4mbTqIDqaS4"; ## SECRET-DATA
+            }
+        }
+    }
+    services {
+        ssh;
+        netconf {
+            ssh;
+        }
+    }
+    syslog {
+        user * {
+            any emergency;
+        }
+        file messages {
+            any notice;
+            authorization info;
+        }
+        file interactive-commands {
+            interactive-commands any;
+        }
+    }
+}
+chassis {
+    fpc 0 {
+        pic 0 {
+            interface-type xe;
+        }
+        performance-mode;
+    }
+}
+interfaces {
+    xe-0/0/0 {
+        unit 0 {
+            family inet {
+                address 10.0.0.1/24;
+            }
+        }
+    }
+    xe-0/0/1 {
+        unit 0 {
+            family inet {
+                address 1.1.2.1/24;
+            }
+        }
+    }
+    fxp0 {
+        unit 0 {
+            family inet {
+                address 172.17.0.22/24;
+            }
+        }
+    }
+}
+routing-options {
+    static {
+        route 100.0.0.0/8 next-hop 1.1.2.2;
+        route 208.223.0.0/16 next-hop 10.0.0.100;
+    }
+}

@@ -39,10 +39,10 @@ fi
 echo " ok ($HUGEPAGES)"
 
 vcpmem=2000
-MEM="${MEM:-5000}"
-VCPU="${VCPU:-5}"
+MEM="${MEM:-8000}"
+VCPU="${VCPU:-7}"
 
-if [ ! -e "/u/$TAR" -a -z "$VCP" ]; then
+if [ ! -f "/u/$TAR" -a -z "$VCP" ]; then
   echo "Please set env TAR with a URL to download vmx-<rel>.tgz:"
   echo "docker run .... --env TAR=\"\" ..."
   echo "or specify a RE/VCP image via --env VCP=<jinstall*.img>"
@@ -58,12 +58,6 @@ if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
 else
   CPU=""
   echo "CPU doesn't supports high performance PFE image, using lite version"
-fi
-
-if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
-  echo "Using high performance PFE image (specify --env PFE=\"lite\" otherwise)"
-else
-  echo "Using PFE lite image (remove --env PFE otherwise)"
 fi
 
 #---------------------------------------------------------------------------
@@ -194,7 +188,17 @@ N=0	# added to each tap interface to make them unique
 # the bridge docker0:
 
 if [ -z "`ifconfig docker0 >/dev/null 2>/dev/null && echo notfound`" ]; then
-  echo "WARNING: Running without --net=host. No network based fxp0 access and only 10GE interfaces supported"
+  # Running without --net=host. Create local bridge for MGMT and place
+  # eth0 in it.
+  BRMGMT="br0"
+  MYIP=`ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p'`
+  GATEWAY=`ip -4 route list 0/0 |cut -d' ' -f3`
+  ip addr flush dev eth0
+  brctl addbr $BRMGMT
+  ip link set $BRMGMT up
+  ip addr add $MYIP/16 dev br0
+  route add default gw $GATEWAY
+  brctl addif $BRMGMT eth0
 else
   BRMGMT="docker0"
 fi
@@ -395,25 +399,57 @@ else
 fi
 
 if [ ! -z "$VCP" ]; then
-  # for now its assumed that providing an image 
-  # via env VCP means we have a 15.1F+ image
   cp /u/$VCP .
   VCPIMAGE="$VCP"
-  VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
-  METADATAIMAGE="`ls /tmp/vmx*/images/metadata_usb.img`" || true
-  if [ ! -z "$METADATAIMAGE" ]; then
-    METADATA="-usb -usbdevice disk:`ls /tmp/vmx*/images/metadata_usb.img` -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-  else 
-    METADATA="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-  fi
 else
   VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
+fi
+
+VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
+if [ -z "$VFPIMAGE" ]; then
+  # not a 15.1F image, so lets see if we find the 14.1 based vPFE image ...
   VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img`"
   # This will allow the use of the high performance image if
   if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
     VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img`"
   fi
 fi
+
+# Lets build a metadata image. Required for 15.1F3 and higher releases.
+# It "tells" the vRE to work as a vMX with a vPFE and one can place a config
+# file in it.
+
+mkdir config_drive
+mkdir config_drive/boot
+mkdir config_drive/config
+cat > config_drive/boot/loader.conf <<EOF
+vmtype="0"
+vm_retype="RE-VMX"
+vm_i2cid="0xBAA"
+vm_chassis_i2cid="161"
+vm_instance="0"
+EOF
+if [ ! -z "$CONFIG" ]; then
+  if [ -f "/u/$CONFIG" ]; then
+    cp /u/$CONFIG config_drive/config/juniper.conf
+  else
+    echo "Error: Can't find config file $CONFIG"
+    cleanup
+  fi
+fi
+
+cd config_drive
+tar zcf vmm-config.tgz *
+rm -rf boot config
+cd ..
+# Create our own metadrive image, so we can use a junos config file
+# 100MB should be enough.
+dd if=/dev/zero of=metadata.img bs=1M count=100
+mkfs.vfat metadata.img
+mount -o loop metadata.img /mnt
+cp config_drive/vmm-config.tgz /mnt
+umount /mnt
+METADATA="-usb -usbdevice disk:format=raw:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
 
 if [ ! -f $VCPIMAGE ]; then
   echo "Can't find jinstall64-vmx*img in tar file"
@@ -434,7 +470,7 @@ echo "VFP image: $VFPIMAGE"
 echo "hdd image: $HDDIMAGE"
 echo "METADATA : $METADATA"
 
-if [ -z "DEV" ]; then
+if [ -z "$DEV" ]; then
   echo "Please set env DEV with list of interfaces or bridges:"
   echo "docker run .... --env DEV=\"eth1 br5 \""
   exit 1
@@ -479,7 +515,7 @@ expect "login:"
 EOF
 
 # if we have a config file, use it to log in an set
-if [ -e "/u/$CFG" ]; then
+if [ -f "/u/$CFG" ]; then
   printf "\033c"  # clear screen
   echo "Using config file /u/$CFG to provision the vMX ..."
   cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 $consoleport
