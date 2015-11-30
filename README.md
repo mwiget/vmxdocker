@@ -57,7 +57,6 @@ $ docker run --name vmx1 --rm --privileged --net=host \
   --env CFG="vmx1.cfg" \
   --env CONFIG="vmx1-conf.txt" \
   --env DEV="br0 br0" \
-  --env MEM="5000" --env VCPU="5" \
   -i -t marcelwiget/vmx:latest
 ```
 
@@ -137,7 +136,7 @@ provided vMX distribution tar file.
 
 --env MEM="<megabytes>"   
 Optional. Set the amount of memory in MB given to the vPFE image.
-default is 5000. The vRE image is hard set in launch.sh to 2000MB.
+default is 8000 (15.1F requires at least 8GB). The vRE image is hard set in launch.sh to 2000MB.
 
 --env VCPU="<count>"  
 Optional. Set the number of vCPU to be used by the vPFE. Default is 5.
@@ -197,7 +196,7 @@ Launch both vMX's:
     --env CFG="vmx1.cfg" \
     --env DEV="br0" \
     --env PFE="lite" \
-    --env MEM="5000" --env VCPU="5" \
+    --env MEM="8000" --env VCPU="5" \
     -i -t marcelwiget/vmx:latest
 
   docker run --name vmx2 -d --privileged --net=host \
