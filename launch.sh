@@ -60,12 +60,6 @@ else
   echo "CPU doesn't supports high performance PFE image, using lite version"
 fi
 
-if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
-  echo "Using high performance PFE image (specify --env PFE=\"lite\" otherwise)"
-else
-  echo "Using PFE lite image (remove --env PFE otherwise)"
-fi
-
 #---------------------------------------------------------------------------
 function cleanup {
 
@@ -304,7 +298,10 @@ do
   # check if there is a snabb binary available in the mounted directory.
   # use that one if yes
   if [ -f /u/snabb ]; then
-    SNABB=/u/snabb
+    cp /u/snabb /tmp/
+    SNABB=/tmp/snabb
+  else
+    SNABB=$snabb
   fi
   # check if there is a lwaftr config in /tmp
   if [ -f /tmp/lwaftr-xe${port_n}.cfg ]; then
