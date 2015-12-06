@@ -39,10 +39,10 @@ fi
 echo " ok ($HUGEPAGES)"
 
 vcpmem=2000
-MEM="${MEM:-5000}"
-VCPU="${VCPU:-5}"
+MEM="${MEM:-8000}"
+VCPU="${VCPU:-7}"
 
-if [ ! -e "/u/$TAR" -a -z "$VCP" ]; then
+if [ ! -f "/u/$TAR" -a -z "$VCP" ]; then
   echo "Please set env TAR with a URL to download vmx-<rel>.tgz:"
   echo "docker run .... --env TAR=\"\" ..."
   echo "or specify a RE/VCP image via --env VCP=<jinstall*.img>"
@@ -289,30 +289,20 @@ EOF
       numactl="numactl --cpunodebind=$node --membind=$node"
       cat > launch_snabb_xe${port_n}.sh <<EOF
 #!/bin/bash
-SNABB=$snabb
-CONFIG=xe${port_n}.cfg
-MAC=$macaddr
-
 while :
 do
   # check if there is a snabb binary available in the mounted directory.
   # use that one if yes
+  SNABB=$snabb
   if [ -f /u/snabb ]; then
     cp /u/snabb /tmp/
     SNABB=/tmp/snabb
-  else
-    SNABB=$snabb
   fi
   # check if there is a lwaftr config in /tmp
-  if [ -f /tmp/lwaftr-xe${port_n}.cfg ]; then
-     cp /tmp/lwaftr-xe${port_n}.cfg \$CONFIG
+  CONFIG=xe${port_n}.cfg
+  if [ -s /tmp/lwaftr-xe${port_n}.cfg ]; then
+    CONFIG="/tmp/lwaftr-xe${port_n}.cfg"
      sed -i "s/00:00:00:00:00:00/$macaddr/" \$CONFIG
-  fi
-  # check if there is a snabb config file in the mounted directory.
-  # If yes, use it and replace the dummy mac with the one assigned to the interface
-  if [ -f /u/\$CONFIG ]; then
-    cp /u/\$CONFIG .
-    sed -i "s/00:00:00:00:00:00/$macaddr/" \$CONFIG
   fi
   $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$CONFIG %s.socket
   echo "waiting 5 seconds before relaunch ..."
@@ -433,9 +423,15 @@ vm_i2cid="0xBAA"
 vm_chassis_i2cid="161"
 vm_instance="0"
 EOF
-if [ -f "/u/$CONFIG" ]; then
-  cp /u/$CONFIG config_drive/config/juniper.conf
+if [ ! -z "$CONFIG" ]; then
+  if [ -f "/u/$CONFIG" ]; then
+    cp /u/$CONFIG config_drive/config/juniper.conf
+  else
+    echo "Error: Can't find config file $CONFIG"
+    cleanup
+  fi
 fi
+
 cd config_drive
 tar zcf vmm-config.tgz *
 rm -rf boot config
@@ -530,7 +526,7 @@ if [ ! -z "$VFPIMAGE" ]; then
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
   # lwaftr hack. Launch the script that queries the router periodically
-  /check-lwaftr-config.sh &
+  /check-lwaftr-config.sh $CONFIG $CFG &
 
   # launch snabb drivers, if any
   for file in launch_snabb_xe*.sh
