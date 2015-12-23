@@ -322,7 +322,6 @@ EOF
   else
 
     TAP="ge$ID$port_n"
-    port_n=$(($port_n + 1))
     $(create_tap_if $TAP)
 
     if [ -z "`ifconfig $DEV > /dev/null 2>/dev/null || echo found`" ]; then
@@ -369,6 +368,7 @@ EOF
     macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
     NETDEVS="$NETDEVS -netdev tap,id=net$port_n,ifname=$TAP,script=no,downscript=no \
         -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
+    port_n=$(($port_n + 1))
 
   fi
 
