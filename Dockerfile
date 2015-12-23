@@ -18,7 +18,7 @@ RUN apt-get install -y --no-install-recommends build-essential git ca-certificat
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* /snabbswitch /qemu
 
-COPY launch.sh README.md check-lwaftr-config.sh parse-lwaftr-config.pl /
+COPY launch.sh README.md check-lwaftr-config.sh parse-lwaftr-config.pl restart_snabbvmx.sh /
 
 ENTRYPOINT ["/launch.sh"]
 

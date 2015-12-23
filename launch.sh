@@ -277,6 +277,9 @@ for DEV in $DEV; do # ============= loop thru interfaces start
         -netdev type=vhost-user,id=net$port_n,chardev=char$port_n \
         -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
 
+      echo "$DEV" > pci_xe${port_n} 
+      echo "$macaddr" > mac_xe${port_n} 
+
       cat > xe${port_n}.cfg <<EOF
 return {
   {
@@ -300,11 +303,11 @@ do
   fi
   # check if there is a lwaftr config in /tmp
   CONFIG=xe${port_n}.cfg
-  if [ -s /tmp/lwaftr-xe${port_n}.cfg ]; then
-    CONFIG="/tmp/lwaftr-xe${port_n}.cfg"
-     sed -i "s/00:00:00:00:00:00/$macaddr/" \$CONFIG
+  if [ -f /tmp/xe${port_n}.sh ]; then
+    . /tmp/xe${port_n}.sh $node \$SNABB
+  else
+    $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$CONFIG %s.socket
   fi
-  $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$CONFIG %s.socket
   echo "waiting 5 seconds before relaunch ..."
   sleep 5
 done
