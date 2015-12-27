@@ -19,24 +19,25 @@ if [ ! -d "/hugetlbfs" -o ! -d "/u" ]; then
   exit 1
 fi
 
-echo -n "Checking system for hugepages ..."
-HUGEPAGES=`cat /proc/sys/vm/nr_hugepages`
-if [ "2500" -gt "$HUGEPAGES" ]; then
-  echo ""
-  echo ""
-  echo "ERROR: Not enough hugepages reserved!"
-  echo ""
-  echo "Please reserve at least 2500 hugepages to run vMX."
-  echo "You can do this as root with the following command:"
-  echo ""
-  echo "# echo 5000 > /proc/sys/vm/nr_hugepages"
-  echo ""
-  echo "Make it permanent by adding 'hugepages=5000' to GRUB_CMDLINE_LINUX_DEFAULT"
-  echo "in /etc/default/grub, followed by running 'update-grub'"
-  echo ""
-  exit 1
-fi
-echo " ok ($HUGEPAGES)"
+#echo -n "Checking system for hugepages ..."
+#HUGEPAGES=`cat /proc/sys/vm/nr_hugepages`
+HUGEPAGES=0
+#if [ "2500" -gt "$HUGEPAGES" ]; then
+#  echo ""
+#  echo ""
+#  echo "ERROR: Not enough hugepages reserved!"
+#  echo ""
+#  echo "Please reserve at least 2500 hugepages to run vMX."
+#  echo "You can do this as root with the following command:"
+#  echo ""
+#  echo "# echo 5000 > /proc/sys/vm/nr_hugepages"
+#  echo ""
+#  echo "Make it permanent by adding 'hugepages=5000' to GRUB_CMDLINE_LINUX_DEFAULT"
+#  echo "in /etc/default/grub, followed by running 'update-grub'"
+#  echo ""
+#  exit 1
+#fi
+#echo " ok ($HUGEPAGES)"
 
 vcpmem=2000
 MEM="${MEM:-8000}"
@@ -62,6 +63,8 @@ fi
 
 #---------------------------------------------------------------------------
 function cleanup {
+
+  set +e
 
   echo ""
   echo ""
@@ -115,7 +118,9 @@ function cleanup {
   if [ ! -z "$PCIDEVS" ]; then
     echo "Giving 10G ports back to linux kernel"
     for PCI in $PCIDEVS; do
-      echo -n "$PCI" > /sys/bus/pci/drivers/ixgbe/bind
+      if [ "$PCI" != "0000:00:00.0" ]; then
+        echo -n "$PCI" > /sys/bus/pci/drivers/ixgbe/bind 2>/dev/null
+      fi
     done
   fi
   trap - EXIT SIGINT SIGTERM
@@ -221,8 +226,10 @@ N=$((N + 1))
 $(create_tap_if $VFPINT)
 
 # Create internal bridge between VCP and VFP
+# and assign an IP to get connectivity for JET
 BRINT="brint$ID"
 $(create_bridge $BRINT)
+ifconfig $BRINT 128.0.0.200/16
 
 # Add internal tap interface to internal bridge
 $(addif_to_bridge $BRINT $VCPINT)
@@ -267,20 +274,17 @@ for DEV in $DEV; do # ============= loop thru interfaces start
   # interface names
 
   if [ "12" -eq "${#DEV}" ]; then
-    # cool. We got a PCI address. Lets check if its valid
-    if [ -L /sys/bus/pci/drivers/ixgbe/$DEV ]; then
-      echo "$DEV is a supported Intel 82599-based 10G port."
-      # add $DEV to list
-      PCIDEVS="$PCIDEVS $DEV"
-      macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-      NETDEVS="$NETDEVS -chardev socket,id=char$port_n,path=./xe$port_n.socket,server \
+    # add $DEV to list
+    PCIDEVS="$PCIDEVS $DEV"
+    macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    NETDEVS="$NETDEVS -chardev socket,id=char$port_n,path=./xe$port_n.socket,server \
         -netdev type=vhost-user,id=net$port_n,chardev=char$port_n \
         -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
 
-      echo "$DEV" > pci_xe${port_n} 
-      echo "$macaddr" > mac_xe${port_n} 
+    echo "$DEV" > pci_xe${port_n} 
+    echo "$macaddr" > mac_xe${port_n} 
 
-      cat > xe${port_n}.cfg <<EOF
+    cat > xe${port_n}.cfg <<EOF
 return {
   {
     port_id = "xe${port_n}",
@@ -288,9 +292,9 @@ return {
   }
 }
 EOF
-      node=$(pci_node $DEV)
-      numactl="numactl --cpunodebind=$node --membind=$node"
-      cat > launch_snabb_xe${port_n}.sh <<EOF
+    node=$(pci_node $DEV)
+    numactl="numactl --cpunodebind=$node --membind=$node"
+    cat > launch_snabb_xe${port_n}.sh <<EOF
 #!/bin/bash
 while :
 do
@@ -301,29 +305,33 @@ do
     cp /u/snabb /tmp/
     SNABB=/tmp/snabb
   fi
-  # check if there is a lwaftr config in /tmp
-  CONFIG=xe${port_n}.cfg
-  if [ -f /tmp/xe${port_n}.sh ]; then
-    . /tmp/xe${port_n}.sh $node \$SNABB
+  # check if this port is assigned to lwaftr-{ifname1}-{ifname2}
+  IFNAME=xe${port_n}
+  IFNAME1=`grep lwaftr /u/$CONFIG | cut -f1 -d'{'| cut -f2 -d-`
+  IFNAME2=`grep lwaftr /u/$CONFIG | cut -f1 -d'{'| cut -f3 -d- | cut -f1 -d' '`
+  if [ x\$IFNAME == x\$IFNAME1 ]; then
+    echo "port in use by snabbvmx ..."
+    sleep 30
   else
-    $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$CONFIG %s.socket
+    if [ x\$IFNAME == x\$IFNAME2 ]; then
+      echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
+      $numactl \$SNABB snabbvmx run --v6-port \$IFNAME1 --v6-pci \`cat pci_\$IFNAME1\` --v4-port \$IFNAME2 --v4-pci \`cat pci_\$IFNAME2\` --sock %s.socket --ip 128.0.0.1 --user snabbvmx --identity /u/$IDENTITY
+    else
+      echo "launch snabbnfv for \$IFNAME ..."
+      $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$IFNAME.cfg %s.socket
+    fi
   fi
   echo "waiting 5 seconds before relaunch ..."
   sleep 5
 done
 
 EOF
-      chmod a+rx launch_snabb_xe${port_n}.sh
-      port_n=$(($port_n + 1))
-    else
-      echo "Error: $DEV isn't an Intel 82599-based 10G port!"
-      exit 1
-    fi
+    chmod a+rx launch_snabb_xe${port_n}.sh
+    port_n=$(($port_n + 1))
 
   else
 
     TAP="ge$ID$port_n"
-    port_n=$(($port_n + 1))
     $(create_tap_if $TAP)
 
     if [ -z "`ifconfig $DEV > /dev/null 2>/dev/null || echo found`" ]; then
@@ -370,6 +378,7 @@ EOF
     macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
     NETDEVS="$NETDEVS -netdev tap,id=net$port_n,ifname=$TAP,script=no,downscript=no \
         -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
+    port_n=$(($port_n + 1))
 
   fi
 
@@ -528,9 +537,6 @@ if [ ! -z "$VFPIMAGE" ]; then
   vfp_pid="/var/tmp/vfp-$macaddr1.pid"
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
-  # lwaftr hack. Launch the script that queries the router periodically
-  /check-lwaftr-config.sh $CONFIG $CFG &
-
   # launch snabb drivers, if any
   for file in launch_snabb_xe*.sh
   do
@@ -542,14 +548,24 @@ if [ ! -z "$VFPIMAGE" ]; then
   # TODO: once 15.1 for vMX is released with a fix for --cpu host, add this 
   # for increased performance. Can't really enable this for 14.1R4.5, because
   # it will break VFP 
-  RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
-    -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
-    -drive if=ide,file=$VFPIMAGE \
-    -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
-    -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
-    -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-    -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
-    $NETDEVS -nographic"
+  if [ "0" -gt "$HUGEPAGES" ]; then
+    RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
+      -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
+      -drive if=ide,file=$VFPIMAGE \
+      -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
+      -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
+      $NETDEVS -nographic"
+  else
+    RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node \
+      -drive if=ide,file=$VFPIMAGE \
+      -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
+      -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
+      $NETDEVS -nographic"
+  fi
 
   echo "$RUNVFP" > runvfp.sh
   chmod a+rx runvfp.sh
