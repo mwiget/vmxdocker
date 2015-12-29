@@ -20,24 +20,23 @@ if [ ! -d "/hugetlbfs" -o ! -d "/u" ]; then
 fi
 
 #echo -n "Checking system for hugepages ..."
-#HUGEPAGES=`cat /proc/sys/vm/nr_hugepages`
-HUGEPAGES=0
-#if [ "2500" -gt "$HUGEPAGES" ]; then
-#  echo ""
-#  echo ""
-#  echo "ERROR: Not enough hugepages reserved!"
-#  echo ""
-#  echo "Please reserve at least 2500 hugepages to run vMX."
-#  echo "You can do this as root with the following command:"
-#  echo ""
-#  echo "# echo 5000 > /proc/sys/vm/nr_hugepages"
-#  echo ""
-#  echo "Make it permanent by adding 'hugepages=5000' to GRUB_CMDLINE_LINUX_DEFAULT"
-#  echo "in /etc/default/grub, followed by running 'update-grub'"
-#  echo ""
-#  exit 1
-#fi
-#echo " ok ($HUGEPAGES)"
+HUGEPAGES=`cat /proc/sys/vm/nr_hugepages`
+if [ "2500" -gt "$HUGEPAGES" ]; then
+  echo ""
+  echo ""
+  echo "ERROR: Not enough hugepages reserved!"
+  echo ""
+  echo "Please reserve at least 2500 hugepages to run vMX."
+  echo "You can do this as root with the following command:"
+  echo ""
+  echo "# echo 5000 > /proc/sys/vm/nr_hugepages"
+  echo ""
+  echo "Make it permanent by adding 'hugepages=5000' to GRUB_CMDLINE_LINUX_DEFAULT"
+  echo "in /etc/default/grub, followed by running 'update-grub'"
+  echo ""
+  exit 1
+fi
+echo " ok ($HUGEPAGES)"
 
 vcpmem=2000
 MEM="${MEM:-8000}"
@@ -315,7 +314,7 @@ do
   else
     if [ x\$IFNAME == x\$IFNAME2 ]; then
       echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
-      $numactl \$SNABB snabbvmx run --v6-port \$IFNAME1 --v6-pci \`cat pci_\$IFNAME1\` --v4-port \$IFNAME2 --v4-pci \`cat pci_\$IFNAME2\` --sock %s.socket --ip 128.0.0.1 --user snabbvmx --identity /u/$IDENTITY
+      $numactl \$SNABB snabbvmx run --v6-port \$IFNAME1 --v6-pci \`cat pci_\$IFNAME1\` --v4-port \$IFNAME2 --v4-pci \`cat pci_\$IFNAME2\` --v6-mac \`cat mac_\$IFNAME1\` --v4-mac \`cat mac_\$IFNAME2\` --sock %s.socket --ip 128.0.0.1 --user snabbvmx --identity /u/$IDENTITY
     else
       echo "launch snabbnfv for \$IFNAME ..."
       $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$IFNAME.cfg %s.socket
@@ -543,13 +542,33 @@ if [ ! -z "$VFPIMAGE" ]; then
     tmux new-window -a -d -n "${file:13:3}" -t $tmux_session ./$file
   done
 
+  # Launch a script that connects to the vRE and restarts snabbvmx whenever a commit has
+  # executed. Crude way to allow snabbvmx to learn about all config changes. This will
+  # be improved/removed when adding proper Junos JET/SDK support
+
+  if [ ! -z "/u/$IDENTITY" ]; then
+    cat > restart_snabbvmx_on_commit.sh <<EOF
+#!/bin/bash
+while true; do
+ echo "<rpc><get-syslog-events> <stream>messages</stream> <event>UI_COMMIT_COMPLETED</event></get-syslog-events></rpc>" | ssh -T -s -p830 -o StrictHostKeyChecking=no -i /u/$IDENTITY snabbvmx@128.0.0.1 netconf | while IFS='' read -r line || [[ -n "$line" ]]; do
+  if [ \`echo \$line | grep -c "UI_COMMIT_COMPLETED" \` -gt 0 ]; then
+    pkill -f 'snabb snabbvmx'
+  fi
+ done
+ echo "lost netconf session to vRE. Restarting after 2 seconds"
+ sleep 2
+done
+EOF
+  chmod a+rx restart_snabbvmx_on_commit.sh
+  ./restart_snabbvmx_on_commit.sh &
+  fi
+
   # we borrow the last $numactl in case of 10G ports. If there wasn't one
   # then this will be simply empty
   # TODO: once 15.1 for vMX is released with a fix for --cpu host, add this 
   # for increased performance. Can't really enable this for 14.1R4.5, because
   # it will break VFP 
-  if [ "0" -gt "$HUGEPAGES" ]; then
-    RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
+  RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
       -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
@@ -557,15 +576,6 @@ if [ ! -z "$VFPIMAGE" ]; then
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
       $NETDEVS -nographic"
-  else
-    RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node \
-      -drive if=ide,file=$VFPIMAGE \
-      -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
-      -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
-      $NETDEVS -nographic"
-  fi
 
   echo "$RUNVFP" > runvfp.sh
   chmod a+rx runvfp.sh
