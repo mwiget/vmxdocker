@@ -260,15 +260,18 @@ function create_config_drive {
   mkdir config_drive
   mkdir config_drive/boot
   mkdir config_drive/config
+  mkdir config_drive/config/license
   cat > config_drive/boot/loader.conf <<EOF
 vmchtype="vmx"
 vm_retype="$RETYPE"
 vm_instance="0"
 EOF
   cp /u/$CONFIG config_drive/config/juniper.conf
-  if [ -f "*.lic" ]; then
+  # placing license files on the config drive isn't supported yet
+  # but it is assumed, this is how it will work.
+  if [ -f *.lic ]; then
     for f in *.lic; do
-      cp $f config_drive/config/
+      cp $f config_drive/config/license
     done
   fi
   cd config_drive
@@ -341,6 +344,7 @@ if [ -z "$VFPIMAGE" ]; then
   qemu-img create -f qcow2 /tmp/vmxhdd.img 2G >/dev/null
   HDDIMAGE="/tmp/vmxhdd.img"
   RETYPE="RE-VRR"
+  SMBIOS=""
   INTNR=1	# added to each tap interface to make them unique
   INTID="em"
 else
@@ -350,6 +354,7 @@ else
   VFPVCPU="${VCPU:-3}"
   HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
   RETYPE="RE-VMX"
+  SMBIOS="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
   INTNR=0	# added to each tap interface to make them unique
   INTID="xe"
 fi
@@ -376,6 +381,30 @@ $(mount_hugetables)
 if [ -f /u/$LICENSE ]; then
   echo "Extract licenses from $LICENSE"
   $(extract_licenses /u/$LICENSE)
+  # placing license files on config drive isn't supported yet,
+  # so until then, lets create and launch a little helper that
+  # will transfer the license file and load it.
+  if [ -f /u/$IDENTITY ]; then
+    cat > add-license.sh <<EOF
+#!/bin/bash
+while true; do
+  scp -o StrictHostKeyChecking=no -i /u/$IDENTITY /u/$LICENSE snabbvmx@$MGMTIP:
+  if [ \$? == 0 ]; then
+    echo "transfer successful"
+    break;
+  fi
+  echo "sleeping 5 seconds ..."
+  sleep 5
+done
+echo "loading license file ..."
+ssh -o StrictHostKeyChecking=no -i /u/$IDENTITY snabbvmx@$MGMTIP "request system license add $LICENSE"
+if [ ! \$? == 0 ]; then
+  echo "command failed"
+  sleep 600
+fi
+EOF
+    chmod a+rx add-license.sh
+  fi
 fi
 
 echo "Creating config drive (metadata.img) ..."
@@ -576,7 +605,7 @@ fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
 RUNVCP="$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
-  -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
+  $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
   -device e1000,netdev=tc0,mac=$macaddr1 \
@@ -600,6 +629,10 @@ for file in launch_snabb_${INTID}*.sh
 do
   tmux new-window -a -d -n "$INTID${file:15:1}" -t $tmux_session ./$file
 done
+
+if [ -f add-license.sh ]; then
+  tmux new-window -a -d -n "lic" -t $tmux_session ./add-license.sh
+fi
 
 # Launch a script that connects to the vRE and restarts snabbvmx whenever a commit has
 # executed. Crude way to allow snabbvmx to learn about all config changes. This will
