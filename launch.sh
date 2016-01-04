@@ -467,7 +467,7 @@ for DEV in $@; do # ============= loop thru interfaces start
   if [ "12" -eq "${#DEV}" ]; then
     # add $DEV to list
     PCIDEVS="$PCIDEVS $DEV"
-    macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    macaddr=`printf '02:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
     NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
         -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
         -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
@@ -573,7 +573,7 @@ EOF
       INTS="$INTS $BRIDGE:$INT"
     fi
 
-    macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    macaddr=`printf '02:49:BB:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
     NETDEVS="$NETDEVS -netdev tap,id=net$INTNR,ifname=$TAP,script=no,downscript=no \
         -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
     INTNR=$(($INTNR + 1))
@@ -587,8 +587,8 @@ done # ===================================== loop thru interfaces done
 # send to it. Then open a telnet session to the console as the first
 # tmux session, so its the main session a user see's.
 
-macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+macaddr1=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+macaddr2=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 vcp_pid="/var/tmp/vcp-$macaddr1.pid"
 vcp_pid=$(echo $vcp_pid | tr ":" "-")
 
@@ -662,8 +662,8 @@ fi
 # Launch VFP
 if [ ! -z "$VFPIMAGE" ]; then
 
-  macaddr1=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-  macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+  macaddr1=`printf '02:49:BD:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+  macaddr2=`printf '02:49:BD:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
   vfp_pid="/var/tmp/vfp-$macaddr1.pid"
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
