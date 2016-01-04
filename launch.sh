@@ -475,7 +475,7 @@ do
     IFNAME1="\$(echo "\$groupname" | cut -f3 -d-)"
     IFNAME2="\$(echo "\$groupname" | cut -f4 -d- | cut -f1 -d' ')"
     if [ x\$IFNAME == x\$IFNAME1 ]; then
-      if [ ! -z "\$IFNAME2" ]; then
+      if [ -z "\$IFNAME2" ]; then
         echo "launch snabbvmx for \$IFNAME1 ..."
         $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
       else
