@@ -7,4 +7,4 @@ docker build -t marcelwiget/vmx:lwaftr .
 #if [ ! -z "$LEFTOVER" ]; then
 #  docker rmi $(docker images | grep "^<none>" | awk '{print $3}')
 #fi
-docker push marcelwiget/vmx:lwaftr
+#docker push marcelwiget/vmx:lwaftr

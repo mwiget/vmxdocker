@@ -1,9 +1,9 @@
-FROM ubuntu:15.04
+FROM ubuntu:15.10
 MAINTAINER Marcel Wiget
 
 # Install enough packages to compile snabb and qemu
 RUN apt-get update
-RUN apt-get install -y --no-install-recommends bridge-utils tmux telnet net-tools netcat expect iproute2 numactl dosfstools
+RUN apt-get install -y --no-install-recommends bridge-utils tmux net-tools iproute2 numactl dosfstools
 
 # Download and compile snabb and qemu, then cleanup
 RUN apt-get install -y --no-install-recommends build-essential git ca-certificates \
@@ -11,7 +11,9 @@ RUN apt-get install -y --no-install-recommends build-essential git ca-certificat
   glib-2.0 libglib2.0-dev libsdl1.2debian libsdl1.2-dev libaio-dev libcap-dev \
   libattr1-dev libpixman-1-dev libncurses5 libncurses5-dev libspice-server1 \
   && git clone -b vmx_olive https://github.com/mwiget/snabbswitch.git \
-  && cd snabbswitch && make -j && make install && make clean \
+  && cd snabbswitch && make -j && make install && make clean && cd .. \
+  && cp snabbswitch/src/program/snabbvmx/manager/snabbvmx_manager.pl / \
+  && chmod a+rx snabbvmx_manager.pl \
   && git clone -b v2.4.0-snabb --depth 50 https://github.com/SnabbCo/qemu && \
   cd qemu && ./configure --target-list=x86_64-softmmu && make -j && make install \
   && apt-get purge -y build-essential git ca-certificates libncurses5-dev glib-2.0 \
