@@ -1,64 +1,45 @@
 #!/bin/bash
 #
-echo "Juniper Networks vMX Docker Container (unsupported prototype)"
-echo ""
-
-set -e	#  Exit immediately if a command exits with a non-zero status.
-
-#export qemu=/qemu/x86_64-softmmu/qemu-system-x86_64
 qemu=/usr/local/bin/qemu-system-x86_64
-snabb=/usr/local/bin/snabb  # only used for Intel 82599 10GE ports
+snabb=/usr/local/bin/snabb
 
-# mount hugetables, remove directory if this isn't possible due
-# to lack of privilege level. A check for the diretory is done further down
-mkdir /hugetlbfs && mount -t hugetlbfs none /hugetlbfs || rmdir /hugetlbfs
+#---------------------------------------------------------------------------
+function show_help {
+  cat <<EOF
+Usage:
 
-# check that we are called with enough privileges and env variables set
-if [ ! -d "/hugetlbfs" -o ! -d "/u" ]; then
-  cat README.md
-  exit 1
-fi
+docker run --name <name> --rm [--volume \$PWD:/u:ro] \\
+   --privileged -i -t marcelwiget/vmx[:version] \\
+   -c <junos_config_file> [-l license_file] \\
+   [-m <kbytes>] [-v <vcpu count>] <image> <pci-address> [<pci-address> ...]
 
-#echo -n "Checking system for hugepages ..."
-HUGEPAGES=`cat /proc/sys/vm/nr_hugepages`
-if [ "2500" -gt "$HUGEPAGES" ]; then
-  echo ""
-  echo ""
-  echo "ERROR: Not enough hugepages reserved!"
-  echo ""
-  echo "Please reserve at least 2500 hugepages to run vMX."
-  echo "You can do this as root with the following command:"
-  echo ""
-  echo "# echo 5000 > /proc/sys/vm/nr_hugepages"
-  echo ""
-  echo "Make it permanent by adding 'hugepages=5000' to GRUB_CMDLINE_LINUX_DEFAULT"
-  echo "in /etc/default/grub, followed by running 'update-grub'"
-  echo ""
-  exit 1
-fi
-echo " ok ($HUGEPAGES)"
+[:version]       Container version. Defaults to :latest
 
-vcpmem=2000
-MEM="${MEM:-8000}"
-VCPU="${VCPU:-7}"
+ -v \$PWD:/u:ro   Required to access a file in the current directory
+                 docker is executed from (ro forces read-only access)
+                 The file will be copied from this location
 
-if [ ! -f "/u/$TAR" -a -z "$VCP" ]; then
-  echo "Please set env TAR with a URL to download vmx-<rel>.tgz:"
-  echo "docker run .... --env TAR=\"\" ..."
-  echo "or specify a RE/VCP image via --env VCP=<jinstall*.img>"
-  echo "You can download the latest release from Juniper Networks at"
-  echo "http://www.juniper.net/support/downloads/?p=vmx"
-  echo "(Requires authentication)"
-  exit 1
-fi
+ -v  Specify the number of virtual CPU's
+ -m  Specify the amount of memory
+ -d  enable debug messages during startup
 
-if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
-  CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
-  echo "CPU supports high performance PFE image"
-else
-  CPU=""
-  echo "CPU doesn't supports high performance PFE image, using lite version"
-fi
+<pci-address>    PCI Address of the Intel 825999 based 10GE port
+                 Multiple ports can be specified, space separated
+                 0000:00:00.0 can be used to create virtio port only
+                 Alternatively, a linux bridge name can be specified, which
+                 will be created unless already present
+
+The running VM can be reached via VNC on port 5901 of the containers IP
+
+Example:
+docker run --name vmx1 --rm --privileged --net=host -v \$PWD:/u:ro \\
+  -i -t marcelwiget/vmx:lwaftr -c vmx1.conf.txt -i snabbvmx.key \\
+  -d jinstall64-vmx-15.1F3.11-domestic.img \\
+  brxe0 brxe1 0000:05:00.0 0000:05:00.1
+
+EOF
+}
+
 
 #---------------------------------------------------------------------------
 function cleanup {
@@ -104,6 +85,7 @@ function cleanup {
 
   if [ ! -z "$BRMGMT" ]; then
     if [ ! -z "$VCPMGMT" ]; then
+      echo "removing $VCPMGMT from $BRMGMT ..."
       $(delif_from_bridge $BRMGMT $VCPMGMT)
       $(delete_tap_if $VCPMGMT) || echo "WARNING: trouble deleting tap $VCPMGMT"
     fi
@@ -127,7 +109,6 @@ function cleanup {
 }
 #---------------------------------------------------------------------------
 
-trap cleanup EXIT SIGINT SIGTERM
 
 function create_bridge {
   if [ -z "`brctl show|grep $11`" ]; then
@@ -184,78 +165,260 @@ function find_free_port {
   echo $port
 }
 
-# Create unique 4 digit ID used for this vMX in interface names
-ID=`printf '%02x%02x' $[RANDOM%256] $[RANDOM%256]`
-N=0	# added to each tap interface to make them unique
+function create_mgmt_bridge {
+  if [ -z "`ifconfig docker0 >/dev/null 2>/dev/null && echo notfound`" ]; then
+    # Running without --net=host. Create local bridge for MGMT and place
+    # eth0 in it.
+    bridge="br0"
+    myip=`ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p'`
+    gateway=`ip -4 route list 0/0 |cut -d' ' -f3`
+    ip addr flush dev eth0
+    brctl addbr $bridge
+    ip link set $bridge up
+    ip addr add $myip/16 dev br0
+    route add default gw $gateway
+    brctl addif $bridge eth0
+  else
+    bridge="docker0"
+  fi
+  echo $bridge
+}
 
-# Check if we run with --net=host or not by checking the existense of
-# the bridge docker0:
+function virtual_routing_engine_image {
+  # ok. We didn't get a URL, so this must be a file we can reach
+  # via the mounted filesystem given via 'docker run --volume'
+  image=$1
+  if [ ! -e "/u/$image" ]; then
+    >&2 echo "Can't access $image via mount point. Did you specify --volume \$PWD:/u:ro ?"
+   exit 1
+  fi
+  cp /u/$image .
 
-if [ -z "`ifconfig docker0 >/dev/null 2>/dev/null && echo notfound`" ]; then
-  # Running without --net=host. Create local bridge for MGMT and place
-  # eth0 in it.
-  BRMGMT="br0"
-  MYIP=`ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p'`
-  GATEWAY=`ip -4 route list 0/0 |cut -d' ' -f3`
-  ip addr flush dev eth0
-  brctl addbr $BRMGMT
-  ip link set $BRMGMT up
-  ip addr add $MYIP/16 dev br0
-  route add default gw $GATEWAY
-  brctl addif $BRMGMT eth0
+  # unpack images from the tar file (if it is one)
+  if [[ "$image" =~ \.tgz$ ]]; then
+    >&2 echo "extracting VM's from $image ..."
+    tar -zxf /u/$image -C /tmp/ --wildcards vmx*/images/*img
+    vcpimage="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
+  else
+    vcpimage=$image
+  fi
+  echo $vcpimage 
+}
+
+function mount_hugetables {
+  # mount hugetables, remove directory if this isn't possible due
+  # to lack of privilege level. A check for the diretory is done further down
+  mkdir /hugetlbfs && mount -t hugetlbfs none /hugetlbfs || rmdir /hugetlbfs
+
+  # check that we are called with enough privileges and env variables set
+  if [ ! -d "/hugetlbfs" ]; then
+    >&2 echo "Can't access /hugetlbfs. Did you specify --privileged ?"
+    exit 1
+  fi
+
+  hugepages=`cat /proc/sys/vm/nr_hugepages`
+  if [ "0" -gt "$hugepages" ]; then
+    >&2 echo "No hugepages found. Did you specify --privileged ?"
+    exit 1
+  fi
+}
+
+
+function get_host_name_from_config {
+  echo "$(grep "host-name " $1 2>/dev/null | awk '{print $2}' | cut -d';' -f1)"
+}
+
+function get_mgmt_ip {
+  # find IP address of em0 or fxp0 in given config
+  grep --after-context=10 'em0 {\|fxp0 {' $1 | while IFS= read -r line || [[ -n "$line" ]]; do
+      ipaddr="$(echo $line | grep address | awk -F "[ /]" '{print $2}')"
+      if [ ! -z "$ipaddr" ]; then
+        echo "$ipaddr"
+        break
+      fi
+  done
+}
+
+function extract_licenses {
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [ ! -z "$line" ]; then
+      tmp="$(echo "$line" | cut -d' ' -f1)"
+      if [ ! -z "$tmp" ]; then
+        file=${tmp}.lic
+        if [ $DEBUG -gt 0 ]; then
+          >&2 echo "  writing license file $file ..."
+        fi
+        echo "$line" > $file
+      else
+        echo "$line" >> $file
+      fi
+    fi
+  done < "$1"
+}
+
+function create_config_drive {
+  mkdir config_drive
+  mkdir config_drive/boot
+  mkdir config_drive/config
+  cat > config_drive/boot/loader.conf <<EOF
+vmchtype="vmx"
+vm_retype="$RETYPE"
+vm_instance="0"
+EOF
+  cp /u/$CONFIG config_drive/config/juniper.conf
+  if [ -f "*.lic" ]; then
+    for f in *.lic; do
+      cp $f config_drive/config/
+    done
+  fi
+  cd config_drive
+  tar zcf vmm-config.tgz *
+  rm -rf boot config
+  cd ..
+  # Create our own metadrive image, so we can use a junos config file
+  # 100MB should be enough.
+  dd if=/dev/zero of=metadata.img bs=1M count=100 >/dev/null 2>&1
+  mkfs.vfat metadata.img >/dev/null 
+  mount -o loop metadata.img /mnt
+  cp config_drive/vmm-config.tgz /mnt
+  umount /mnt
+}
+
+
+
+#==================================================================
+# main()
+
+echo "Juniper Networks vMX Docker Container (unsupported prototype)"
+echo ""
+DEBUG=0
+while getopts "h?c:m:v:l:i:d" opt; do
+  case "$opt" in
+    h|\?)
+      show_help
+      exit 1
+      ;;
+    v)  VCPU=$OPTARG
+      ;;
+    m)  MEM=$OPTARG
+      ;;
+    c)  CONFIG=$OPTARG
+      ;;
+    l)  LICENSE=$OPTARG
+      ;;
+    i)  IDENTITY=$OPTARG
+      ;;
+    d)  DEBUG=$((DEBUG + 1))
+      ;;
+  esac
+done
+
+shift "$((OPTIND-1))"
+
+# first parameter is the vMX tar file or VM image, http/https URL is fine too
+# if its missing, docker seems to put the container image name in $1, check
+# for it and print the help message and exit
+image=$1
+shift
+
+if [ "$image" == "vmx" ]; then
+  show_help
+  exit 1
+fi 
+
+set -e	#  Exit immediately if a command exits with a non-zero status.
+trap cleanup EXIT SIGINT SIGTERM
+
+VCPIMAGE=$(virtual_routing_engine_image $image)
+
+# if a tar file was given, above func will have extracted the image into /tmp
+VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img 2>/dev/null`" || true   # its ok not to have one ..
+if [ -z "$VFPIMAGE" ]; then
+  echo "Running in vRR mode (without vPFE)"
+  VCPMEM="${MEM:-2000}"
+  VCPVCPU="${VCPU:-1}"
+  echo "Creating empty vmxhdd.img for vRE ..."
+  qemu-img create -f qcow2 /tmp/vmxhdd.img 2G >/dev/null
+  HDDIMAGE="/tmp/vmxhdd.img"
+  RETYPE="RE-VRR"
+  INTNR=1	# added to each tap interface to make them unique
+  INTID="em"
 else
-  BRMGMT="docker0"
+  VCPMEM=2000
+  VCPVCPU=1
+  VFPMEM="${MEM:-8000}"
+  VFPVCPU="${VCPU:-3}"
+  HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
+  RETYPE="RE-VMX"
+  INTNR=0	# added to each tap interface to make them unique
+  INTID="xe"
 fi
 
+NAME=$(get_host_name_from_config /u/$CONFIG)
+MGMTIP=$(get_mgmt_ip /u/$CONFIG)
+
+BRMGMT=$(create_mgmt_bridge)
+
+if [ $DEBUG -gt 0 ]; then
+  cat <<EOF
+
+  NAME=$NAME MGMTIP=$MGMTIP BRMGMT=$BRMGMT
+  vRE : $VCPIMAGE with ${VCPMEM}kB and $VCPVCPU vcpu(s)
+  vPFE: $VFPIMAGE with ${VFPMEM}kB and $VFPVCPU vcpu(s)
+  config=$CONFIG license=$LICENSE identity=$IDENTITY
+
+EOF
+fi
+
+echo "Checking system for hugepages ..."
+$(mount_hugetables)
+
+if [ -f /u/$LICENSE ]; then
+  echo "Extract licenses from $LICENSE"
+  $(extract_licenses /u/$LICENSE)
+fi
+
+echo "Creating config drive (metadata.img) ..."
+$(create_config_drive)
+
+echo "Create bridges and tap interfaces ..."
+# Create unique 4 digit ID used for this vMX in interface names
+ID=`printf '%02x%02x' $[RANDOM%256] $[RANDOM%256]`
+
 # Create tap interfaces for mgmt and internal connection
+N=0
 VCPMGMT="vcpm$ID$N"
 N=$((N + 1))
 $(create_tap_if $VCPMGMT)
+$(addif_to_bridge $BRMGMT $VCPMGMT)
 
-VCPINT="vcpi$ID$N"
-N=$((N + 1))
-$(create_tap_if $VCPINT)
+if [ ! -z "$VFPIMAGE" ]; then
+  VCPINT="vcpi$ID$N"
+  N=$((N + 1))
+  $(create_tap_if $VCPINT)
 
-VFPMGMT="vfpm$ID$N"
-N=$((N + 1))
-$(create_tap_if $VFPMGMT)
-
-VFPINT="vfpi$ID$N"
-N=$((N + 1))
-$(create_tap_if $VFPINT)
-
-# Create internal bridge between VCP and VFP
-# and assign an IP to get connectivity for JET
-BRINT="brint$ID"
-$(create_bridge $BRINT)
-ifconfig $BRINT 128.0.0.200/16
-
-# Add internal tap interface to internal bridge
-$(addif_to_bridge $BRINT $VCPINT)
-$(addif_to_bridge $BRINT $VFPINT)
-
-# Add external (mgmt) tap interfaces to docker0
-if [ ! -z "$BRMGMT" ]; then
-  $(addif_to_bridge $BRMGMT $VCPMGMT)
+  VFPMGMT="vfpm$ID$N"
+  N=$((N + 1))
+  $(create_tap_if $VFPMGMT)
   $(addif_to_bridge $BRMGMT $VFPMGMT)
+
+  VFPINT="vfpi$ID$N"
+  N=$((N + 1))
+  $(create_tap_if $VFPINT)
+
+  # Create internal bridge between VCP and VFP
+  # and add internal tap interfaces
+  BRINT="brint$ID"
+  $(create_bridge $BRINT)
+  $(addif_to_bridge $BRINT $VCPINT)
+  $(addif_to_bridge $BRINT $VFPINT)
 fi
 
-port_n=0	# added to each tap interface to make them unique
+echo "BRMGMT=$BRMGMT VCPMGMT=$VCPMGMT"
+echo "Building virtual interfaces and bridges for $@ ..."
 
-# =======================================================
-# check the list of interfaces provided in --env DEV=
-# to keep track of the bridges and tap interfaces
-# for the data ports for cleanup before exiting
 
-BRIDGES=""
-TAPS=""
-INTS=""
-NETDEVS=""    # build netdev list for VFP qemu
-PCIDEVS=""
-
-echo "Building virtual interfaces and bridges ..."
-
-for DEV in $DEV; do # ============= loop thru interfaces start
+for DEV in $@; do # ============= loop thru interfaces start
 
   # check if we have been given a bridge or interface
   # If its an interface, we need to first create a unique bridge
@@ -276,24 +439,24 @@ for DEV in $DEV; do # ============= loop thru interfaces start
     # add $DEV to list
     PCIDEVS="$PCIDEVS $DEV"
     macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-    NETDEVS="$NETDEVS -chardev socket,id=char$port_n,path=./xe$port_n.socket,server \
-        -netdev type=vhost-user,id=net$port_n,chardev=char$port_n \
-        -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
+    NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
+        -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
+        -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
 
-    echo "$DEV" > pci_xe${port_n} 
-    echo "$macaddr" > mac_xe${port_n} 
+    echo "$DEV" > pci_${INTID}${INTNR} 
+    echo "$macaddr" > mac_${INTID}${INTNR} 
 
-    cat > xe${port_n}.cfg <<EOF
+    cat > ${INTID}${INTNR}.cfg <<EOF
 return {
   {
-    port_id = "xe${port_n}",
+    port_id = "${INTID}${INTNR}",
     mac_address = nil
   }
 }
 EOF
     node=$(pci_node $DEV)
     numactl="numactl --cpunodebind=$node --membind=$node"
-    cat > launch_snabb_xe${port_n}.sh <<EOF
+    cat > launch_snabb_${INTID}${INTNR}.sh <<EOF
 #!/bin/bash
 while :
 do
@@ -304,43 +467,50 @@ do
     cp /u/snabb /tmp/
     SNABB=/tmp/snabb
   fi
-  # check if this port is assigned to lwaftr-{ifname1}-{ifname2}
-  IFNAME=xe${port_n}
-  IFNAME1=`grep lwaftr /u/$CONFIG | cut -f1 -d'{'| cut -f2 -d-`
-  IFNAME2=`grep lwaftr /u/$CONFIG | cut -f1 -d'{'| cut -f3 -d- | cut -f1 -d' '`
-  if [ x\$IFNAME == x\$IFNAME1 ]; then
-    echo "port in use by snabbvmx ..."
-    sleep 30
-  else
-    if [ x\$IFNAME == x\$IFNAME2 ]; then
+  # check if this port is assigned to snabbvmx-{service}-{ifname1}-{ifname2}
+  IFNAME=${INTID}${INTNR}
+  groupname="\$(grep snabbvmx /u/$CONFIG | grep \$IFNAME | awk '{print \$1}')"
+  if [ ! -z "\$groupname" ]; then
+    SERVICE="\$(echo "\$groupname" | cut -f2 -d-)"
+    IFNAME1="\$(echo "\$groupname" | cut -f3 -d-)"
+    IFNAME2="\$(echo "\$groupname" | cut -f4 -d- | cut -f1 -d' ')"
+    if [ x\$IFNAME == x\$IFNAME1 ]; then
+      if [ ! -z "\$IFNAME2" ]; then
+        echo "launch snabbvmx for \$IFNAME1 ..."
+        $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
+      else
+        echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
+        sleep 30
+      fi
+    elif [ x\$IFNAME == x\$IFNAME2 ]; then
       echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
-      $numactl \$SNABB snabbvmx run --v6-port \$IFNAME1 --v6-pci \`cat pci_\$IFNAME1\` --v4-port \$IFNAME2 --v4-pci \`cat pci_\$IFNAME2\` --v6-mac \`cat mac_\$IFNAME1\` --v4-mac \`cat mac_\$IFNAME2\` --sock %s.socket --ip 128.0.0.1 --user snabbvmx --identity /u/$IDENTITY
-    else
-      echo "launch snabbnfv for \$IFNAME ..."
-      $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$IFNAME.cfg %s.socket
+      $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --v2id \$IFNAME2 --v2pci \`cat pci_\$IFNAME2\` --v2mac \`cat mac_\$IFNAME2\` --sock %s.socket
     fi
+  else
+    echo "launch snabbnfv for \$IFNAME ..."
+    $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$IFNAME.cfg %s.socket
   fi
   echo "waiting 5 seconds before relaunch ..."
   sleep 5
 done
 
 EOF
-    chmod a+rx launch_snabb_xe${port_n}.sh
-    port_n=$(($port_n + 1))
+    chmod a+rx launch_snabb_${INTID}${INTNR}.sh
+    INTNR=$(($INTNR + 1))
 
   else
 
-    TAP="ge$ID$port_n"
+    TAP="ge$ID$INTNR"
     $(create_tap_if $TAP)
 
     if [ -z "`ifconfig $DEV > /dev/null 2>/dev/null || echo found`" ]; then
       # check if its eventually an existing bridge
-      echo "interface $DEV found"
+      >&2 echo "interface $DEV found"
       if [ ! -z "`brctl show $DEV 2>&1 | grep \"No such device\"`" ]; then
         INT=$DEV # nope, we have a physical interface here
-        echo "$DEV is a physical interface"
+        >&2 echo "$DEV is a physical interface"
       else
-        echo "$DEV is an existing bridge"
+        >&2 echo "$DEV is an existing bridge"
         BRIDGE="$DEV"
       fi
     else
@@ -349,13 +519,13 @@ EOF
       BRIDGE=$DEV
       if [ ! -z "`brctl show $DEV 2>&1 | grep \"No such device\"`" ]; then
         # doesn't exist yet. Lets create it
-        echo "need to create bridge $BRIDGE"
+        >&2 echo "need to create bridge $BRIDGE"
         $(create_bridge $BRIDGE)
       fi
     fi
 
     if [ -z "$BRIDGE" ]; then
-      BRIDGE="br$ID$port_n"
+      BRIDGE="br$ID$INTNR"
       $(create_bridge $BRIDGE)
     fi
 
@@ -375,113 +545,13 @@ EOF
     fi
 
     macaddr=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-    NETDEVS="$NETDEVS -netdev tap,id=net$port_n,ifname=$TAP,script=no,downscript=no \
-        -device virtio-net-pci,netdev=net$port_n,mac=$macaddr"
-    port_n=$(($port_n + 1))
+    NETDEVS="$NETDEVS -netdev tap,id=net$INTNR,ifname=$TAP,script=no,downscript=no \
+        -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
+    INTNR=$(($INTNR + 1))
 
   fi
 
-done
-# ===================================== loop thru interfaces done
-
-echo "=================================="
-echo "BRIDGES: $BRIDGES"
-echo "TAPS:    $TAPS"
-echo "INTS:    $INTS"
-echo "PCIDEVS: $PCIDEVS"
-if [ ! -z "$VFPIMAGE" ]; then
-  echo "=================================="
-  echo "vPFE using ${MEM}MB and $VCPU vCPUs"
-fi
-echo "=================================="
-
-
-if [ ! -z "$TAR" ]; then
-  echo -n "extracting VM's from $TAR ... "
-  tar -zxf /u/$TAR -C /tmp/ --wildcards vmx*/images/*img
-  echo ""
-  HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
-else
-  echo "Creating an empty vmxhdd.img ..."
-  qemu-img create -f qcow2 /tmp/vmxhdd.img 2G
-  HDDIMAGE="/tmp/vmxhdd.img"
-fi
-
-if [ ! -z "$VCP" ]; then
-  cp /u/$VCP .
-  VCPIMAGE="$VCP"
-else
-  VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
-fi
-
-VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
-if [ -z "$VFPIMAGE" ]; then
-  # not a 15.1F image, so lets see if we find the 14.1 based vPFE image ...
-  VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img`"
-  # This will allow the use of the high performance image if
-  if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
-    VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img`"
-  fi
-fi
-
-mkdir config_drive
-mkdir config_drive/boot
-mkdir config_drive/config
-cat > config_drive/boot/loader.conf <<EOF
-vmtype="0"
-vm_retype="RE-VMX"
-vm_i2cid="0xBAA"
-vm_chassis_i2cid="161"
-vm_instance="0"
-EOF
-if [ ! -z "$CONFIG" ]; then
-  if [ -f "/u/$CONFIG" ]; then
-    cp /u/$CONFIG config_drive/config/juniper.conf
-  else
-    echo "Error: Can't find config file $CONFIG"
-    cleanup
-  fi
-fi
-
-cd config_drive
-tar zcf vmm-config.tgz *
-rm -rf boot config
-cd ..
-# Create our own metadrive image, so we can use a junos config file
-# 100MB should be enough.
-dd if=/dev/zero of=metadata.img bs=1M count=100
-mkfs.vfat metadata.img
-mount -o loop metadata.img /mnt
-cp config_drive/vmm-config.tgz /mnt
-umount /mnt
-METADATA="-usb -usbdevice disk:format=raw:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
-
-if [ ! -f $VCPIMAGE ]; then
-  echo "Can't find jinstall64-vmx*img in tar file"
-  exit 1
-fi
-
-if [ ! -f $VFPIMAGE ]; then
-  echo "WARNING: No vPFE image provided. Running in RE/VCP only mode"
-fi
-
-if [ ! -f $HDDIMAGE ]; then
-  echo "Can't find vmxhdd*img in tar file"
-  exit 1
-fi
-
-echo "VCP image: $VCPIMAGE"
-echo "VFP image: $VFPIMAGE"
-echo "hdd image: $HDDIMAGE"
-echo "METADATA : $METADATA"
-
-if [ -z "$DEV" ]; then
-  echo "Please set env DEV with list of interfaces or bridges:"
-  echo "docker run .... --env DEV=\"eth1 br5 \""
-  exit 1
-fi
-
-tmux_session="vmx$ID"
+done # ===================================== loop thru interfaces done
 
 # Launch Junos Control plane virtual image in the background and
 # connect to the console via telnet port $consoleport if we have a config to
@@ -493,40 +563,68 @@ macaddr2=`printf '00:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDO
 vcp_pid="/var/tmp/vcp-$macaddr1.pid"
 vcp_pid=$(echo $vcp_pid | tr ":" "-")
 
-consoleport=$(find_free_port 8700)
-vncdisplay=$(($(find_free_port 5901) - 5900))
+if [ -z "$VFPIMAGE" ]; then
+  VCPNETDEVS="$NETDEVS"
+  NUMACTL="$numactl"
+  NUMA="-numa node,memdev=mem -object memory-backend-file,id=mem,size=${VCPMEM}M,mem-path=/hugetlbfs,share=on"
+else
+  NUMACTL=""
+  NUMA=""
+  VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tc1,mac=$macaddr2"
+fi
 
-RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
+METADATA="-usb -usbdevice disk:format=raw:metadata.img"
+RUNVCP="$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
   -device e1000,netdev=tc0,mac=$macaddr1 \
-  -netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
-  -device virtio-net-pci,netdev=tc1,mac=$macaddr2 \
-  -chardev socket,id=charserial0,host=127.0.0.1,port=$consoleport,telnet,server,nowait \
-  -device isa-serial,chardev=charserial0,id=serial0 \
-  -pidfile $vcp_pid -vnc 127.0.0.1:$vncdisplay -daemonize"
+  -pidfile $vcp_pid $VCPNETDEVS -nographic"
 
 echo "$RUNVCP" > runvcp.sh
 chmod a+rx runvcp.sh
 
-./runvcp.sh # launch VCP in the background
+tmux_session="$NAME"
+tmux new-session -d -n "vcp" -s $tmux_session ./runvcp.sh
 
-echo "waiting for login prompt ..."
-/usr/bin/expect <<EOF
-set timeout -1
-spawn telnet localhost $consoleport
-expect "login:"
-EOF
-
-# if we have a config file, use it to log in an set
-if [ -f "/u/$CFG" ]; then
-  printf "\033c"  # clear screen
-  echo "Using config file /u/$CFG to provision the vMX ..."
-  cat /u/$CFG | nc -t -i 1 -q 1 127.0.0.1 $consoleport
+# Check config for snabbvmx group entries. If there are any
+# run its manager to create an intial set of configs for snabbvmx 
+sx="\$(grep ' snabbvmx-' /u/$CONFIG)"
+if [ ! -z "\$sx" ] && [ -f ./snabbvmx_manager.pl ]; then
+    ./snabbvmx_manager.pl /u/$CONFIG
 fi
 
-tmux new-session -d -n "vcp" -s $tmux_session "telnet localhost $consoleport"
+# launch snabb drivers, if any
+for file in launch_snabb_${INTID}*.sh
+do
+  tmux new-window -a -d -n "$INTID${file:15:1}" -t $tmux_session ./$file
+done
+
+# Launch a script that connects to the vRE and restarts snabbvmx whenever a commit has
+# executed. Crude way to allow snabbvmx to learn about all config changes. This will
+# be improved/removed when adding proper Junos JET/SDK support
+
+if [ -f "/u/$IDENTITY" ]; then
+    cp /u/$IDENTITY .
+    cat > launch_snabbvmx_manager.sh <<EOF
+#!/bin/bash
+while :
+do
+  file=/u/snabbvmx_manager.??
+  if [ ! -z "\$file" ] && [ -f \$file ]; then
+    cp \$file /tmp/
+    /tmp/snabbvmx_manager.?? $MGMTIP /u/$IDENTITY
+  elif [ -f snabbvmx_manager.pl ]; then
+    ./snabbvmx_manager.pl $MGMTIP /u/$IDENTITY
+  fi
+  echo "waiting 5 seconds before relaunch ..."
+  sleep 5
+done
+EOF
+  chmod a+rx launch_snabbvmx_manager.sh
+  tmux new-window -a -d -n "mgr" -t $tmux_session ./launch_snabbvmx_manager.sh
+fi
 
 # Launch VFP
 if [ ! -z "$VFPIMAGE" ]; then
@@ -536,40 +634,22 @@ if [ ! -z "$VFPIMAGE" ]; then
   vfp_pid="/var/tmp/vfp-$macaddr1.pid"
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
-  # launch snabb drivers, if any
-  for file in launch_snabb_xe*.sh
-  do
-    tmux new-window -a -d -n "${file:13:3}" -t $tmux_session ./$file
-  done
-
-  # Launch a script that connects to the vRE and restarts snabbvmx whenever a commit has
-  # executed. Crude way to allow snabbvmx to learn about all config changes. This will
-  # be improved/removed when adding proper Junos JET/SDK support
-
-  if [ ! -z "/u/$IDENTITY" ]; then
-    cat > restart_snabbvmx_on_commit.sh <<EOF
-#!/bin/bash
-while true; do
- echo "<rpc><get-syslog-events> <stream>messages</stream> <event>UI_COMMIT_COMPLETED</event></get-syslog-events></rpc>" | ssh -T -s -p830 -o StrictHostKeyChecking=no -i /u/$IDENTITY snabbvmx@128.0.0.1 netconf | while IFS='' read -r line || [[ -n "$line" ]]; do
-  if [ \`echo \$line | grep -c "UI_COMMIT_COMPLETED" \` -gt 0 ]; then
-    pkill -f 'snabb snabbvmx'
-  fi
- done
- echo "lost netconf session to vRE. Restarting after 2 seconds"
- sleep 2
-done
-EOF
-  chmod a+rx restart_snabbvmx_on_commit.sh
-  ./restart_snabbvmx_on_commit.sh &
-  fi
-
   # we borrow the last $numactl in case of 10G ports. If there wasn't one
   # then this will be simply empty
   # TODO: once 15.1 for vMX is released with a fix for --cpu host, add this 
   # for increased performance. Can't really enable this for 14.1R4.5, because
   # it will break VFP 
-  RUNVFP="$numactl $qemu -M pc -smp $VCPU --enable-kvm $CPU -m $MEM -numa node,memdev=mem \
-      -object memory-backend-file,id=mem,size=${MEM}M,mem-path=/hugetlbfs,share=on \
+
+  if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
+    CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
+    echo "CPU supports high performance PFE image"
+  else
+    CPU=""
+    echo "CPU doesn't supports high performance PFE image, using lite version"
+  fi
+
+  RUNVFP="$numactl $qemu -M pc -smp $VFPVCPU --enable-kvm $CPU -m $VFPMEM -numa node,memdev=mem \
+      -object memory-backend-file,id=mem,size=${VFPMEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
@@ -594,8 +674,12 @@ tmux attach
 # User terminated tmux, lets kill all VM's too
 
 echo "killing all VM's and snabb drivers ..."
-kill `cat $vcp_pid` || true
-kill `cat $vfp_pid` || true
+if [ ! -z "$vcp_pid" ]; then
+  kill `cat $vcp_pid` || true
+fi
+if [ ! -z "$vfp_pid" ]; then
+  kill `cat $vfp_pid` || true
+fi
 pkill snabb || true
 
 echo "waiting for vcp qemu to terminate ..."
