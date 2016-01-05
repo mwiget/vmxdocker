@@ -10,7 +10,7 @@ Usage:
 
 docker run --name <name> --rm [--volume \$PWD:/u:ro] \\
    --privileged -i -t marcelwiget/vmx[:version] \\
-   -c <junos_config_file> [-l license_file] \\
+   -c <junos_config_file> [-l license_file] [-i identity] \\
    [-m <kbytes>] [-v <vcpu count>] <image> <pci-address> [<pci-address> ...]
 
 [:version]       Container version. Defaults to :latest
@@ -18,6 +18,12 @@ docker run --name <name> --rm [--volume \$PWD:/u:ro] \\
  -v \$PWD:/u:ro   Required to access a file in the current directory
                  docker is executed from (ro forces read-only access)
                  The file will be copied from this location
+
+ -i  ssh private key for user snabbvmx (required for license install and 
+     special services like lw4o6 lwaftr)
+
+ -l  license_file to be loaded at startup (requires user snabbvmx with ssh
+     private key given via option -i)
 
  -v  Specify the number of virtual CPU's
  -m  Specify the amount of memory

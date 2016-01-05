@@ -1,4 +1,4 @@
-FROM ubuntu:15.10
+FROM ubuntu:14.04
 MAINTAINER Marcel Wiget
 
 # Install enough packages to compile snabb and qemu
