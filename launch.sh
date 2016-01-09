@@ -474,6 +474,7 @@ for DEV in $@; do # ============= loop thru interfaces start
     # add $DEV to list
     PCIDEVS="$PCIDEVS $DEV"
     macaddr=`printf '02:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    macaddr=`cat /sys/bus/pci/drivers/ixgbe/$DEV/net/*/address || echo $macaddr`
     NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
         -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
         -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
@@ -680,7 +681,8 @@ if [ ! -z "$VFPIMAGE" ]; then
   # it will break VFP 
 
   if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
-    CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
+#    CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
+    CPU="-cpu Broadwell"
     echo "CPU supports high performance PFE image"
   else
     CPU=""
