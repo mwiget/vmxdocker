@@ -499,7 +499,7 @@ do
   # use that one if yes
   SNABB=$snabb
   if [ -f /u/snabb ]; then
-    cp /u/snabb /tmp/
+    cp /u/snabb /tmp/ 2>/dev/null
     SNABB=/tmp/snabb
   fi
   # check if this port is assigned to snabbvmx-{service}-{ifname1}-{ifname2}
@@ -514,7 +514,7 @@ do
         echo "launch snabbvmx for \$IFNAME1 ..."
         $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
       else
-        echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
+        # echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
         sleep 30
       fi
     elif [ x\$IFNAME == x\$IFNAME2 ]; then
@@ -523,9 +523,9 @@ do
     fi
   else
     echo "launch snabbnfv for \$IFNAME ..."
-    $numactl \$SNABB snabbnfv traffic -k 10 -D 0 $DEV \$IFNAME.cfg %s.socket
+    $numactl \$SNABB snabbnfv traffic $DEV \$IFNAME.cfg %s.socket
   fi
-  echo "waiting 5 seconds before relaunch ..."
+  echo "$0: waiting 5 seconds before relaunch ..."
   sleep 5
 done
 
@@ -588,40 +588,12 @@ EOF
 
 done # ===================================== loop thru interfaces done
 
-# Launch Junos Control plane virtual image in the background and
-# connect to the console via telnet port $consoleport if we have a config to
-# send to it. Then open a telnet session to the console as the first
-# tmux session, so its the main session a user see's.
-
 macaddr1=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 macaddr2=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-vcp_pid="/var/tmp/vcp-$macaddr1.pid"
-vcp_pid=$(echo $vcp_pid | tr ":" "-")
 
-if [ -z "$VFPIMAGE" ]; then
-  VCPNETDEVS="$NETDEVS"
-  NUMACTL="$numactl"
-  NUMA="-numa node,memdev=mem -object memory-backend-file,id=mem,size=${VCPMEM}M,mem-path=/hugetlbfs,share=on"
-else
-  NUMACTL=""
-  NUMA=""
-  VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tc1,mac=$macaddr2"
-fi
-
-METADATA="-usb -usbdevice disk:format=raw:metadata.img"
-RUNVCP="$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
-  $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
-  -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
-  -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
-  -device e1000,netdev=tc0,mac=$macaddr1 \
-  -pidfile $vcp_pid $VCPNETDEVS -nographic"
 
 echo "$RUNVCP" > runvcp.sh
 chmod a+rx runvcp.sh
-
-tmux_session="$NAME"
-tmux new-session -d -n "vcp" -s $tmux_session ./runvcp.sh
 
 # Check config for snabbvmx group entries. If there are any
 # run its manager to create an intial set of configs for snabbvmx 
@@ -633,11 +605,11 @@ fi
 # launch snabb drivers, if any
 for file in launch_snabb_${INTID}*.sh
 do
-  tmux new-window -a -d -n "$INTID${file:15:1}" -t $tmux_session ./$file
+  ./$file &
 done
 
 if [ -f add-license.sh ]; then
-  tmux new-window -a -d -n "lic" -t $tmux_session ./add-license.sh
+  ./add-license.sh &
 fi
 
 # Launch a script that connects to the vRE and restarts snabbvmx whenever a commit has
@@ -657,12 +629,12 @@ do
   elif [ -f snabbvmx_manager.pl ]; then
     ./snabbvmx_manager.pl $MGMTIP /u/$IDENTITY
   fi
-  echo "waiting 5 seconds before relaunch ..."
+  echo "$0: waiting 5 seconds before relaunch ..."
   sleep 5
 done
 EOF
   chmod a+rx launch_snabbvmx_manager.sh
-  tmux new-window -a -d -n "mgr" -t $tmux_session ./launch_snabbvmx_manager.sh
+  ./launch_snabbvmx_manager.sh &
 fi
 
 # Launch VFP
@@ -679,55 +651,46 @@ if [ ! -z "$VFPIMAGE" ]; then
   # for increased performance. Can't really enable this for 14.1R4.5, because
   # it will break VFP 
 
-  if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
-    CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
-    echo "CPU supports high performance PFE image"
-  else
-    CPU=""
-    echo "CPU doesn't supports high performance PFE image, using lite version"
-  fi
+  consoleport=$(find_free_port 8700)
+  vncdisplay=$(($(find_free_port 5901) - 5900))
 
-  RUNVFP="$numactl $qemu -M pc -smp $VFPVCPU --enable-kvm $CPU -m $VFPMEM -numa node,memdev=mem \
+  $numactl $qemu -M pc -smp $VFPVCPU --enable-kvm -cpu Broadwell -m $VFPMEM -numa node,memdev=mem \
       -object memory-backend-file,id=mem,size=${VFPMEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
+      -chardev socket,id=charserial0,host=127.0.0.1,port=$consoleport,telnet,server,nowait \
+      -device isa-serial,chardev=charserial0,id=serial0 \
       -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
-      $NETDEVS -nographic"
-
-  echo "$RUNVFP" > runvfp.sh
-  chmod a+rx runvfp.sh
-
-  tmux new-window -a -d -n "vfp" -t $tmux_session ./runvfp.sh
-
+      $NETDEVS -vnc 127.0.0.1:$vncdisplay -daemonize
 fi
 
-# the following can be useful for debugging 
-#tmux new-window -a -d -n "shell" -t $tmux_session "bash"
+if [ -z "$VFPIMAGE" ]; then
+  VCPNETDEVS="$NETDEVS"
+  NUMACTL="$numactl"
+  NUMA="-numa node,memdev=mem -object memory-backend-file,id=mem,size=${VCPMEM}M,mem-path=/hugetlbfs,share=on"
+else
+  NUMACTL=""
+  NUMA=""
+  VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
+      -device virtio-net-pci,netdev=tc1,mac=$macaddr2"
+fi
 
-# DON'T detach from tmux when running the container! Use docker's ^P^Q to detach
-tmux attach
+METADATA="-usb -usbdevice disk:format=raw:metadata.img"
+$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
+  $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
+  -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
+  -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
+  -device e1000,netdev=tc0,mac=$macaddr1 $VCPNETDEVS -nographic
 
 # ==========================================================================
-# User terminated tmux, lets kill all VM's too
+# User terminated vcp, lets kill all VM's too
 
-echo "killing all VM's and snabb drivers ..."
-if [ ! -z "$vcp_pid" ]; then
-  kill `cat $vcp_pid` || true
-fi
+echo "killing vPFE and snabb drivers ..."
 if [ ! -z "$vfp_pid" ]; then
   kill `cat $vfp_pid` || true
 fi
 pkill snabb || true
-
-echo "waiting for vcp qemu to terminate ..."
-while  true;
-do
-  if [ "1" == "`ps ax|grep qemu| grep $vcp_pid|wc -l`" ]; then
-    break
-  fi
-  sleep 1
-done
 
 exit  # this will call cleanup, thanks to trap set earlier (hopefully)
