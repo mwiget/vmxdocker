@@ -625,9 +625,6 @@ fi
 
 if [ ! -z "$VFPIMAGE" ]; then
 
-  vfp_pid="/var/tmp/vfp-$macaddr1.pid"
-  vfp_pid=$(echo $vfp_pid | tr ":" "-")
-
   # we borrow the last $numactl in case of 10G ports. If there wasn't one
   # then this will be simply empty
   # TODO: once 15.1 for vMX is released with a fix for --cpu host, add this 
@@ -644,7 +641,7 @@ if [ ! -z "$VFPIMAGE" ]; then
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf0,mac=$MACP:19:01 \
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tf1,mac=$MACP:19:02 -pidfile $vfp_pid \
+      -device virtio-net-pci,netdev=tf1,mac=$MACP:19:02 \
       -device isa-serial,chardev=charserial0,id=serial0 \
       -chardev socket,id=charserial0,host=0.0.0.0,port=$consoleport,telnet,server,nowait \
       $NETDEVS -vnc :$vncdisplay -daemonize
@@ -674,9 +671,7 @@ $NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
 # User terminated vcp, lets kill all VM's too
 
 echo "killing vPFE and snabb drivers ..."
-if [ ! -z "$vfp_pid" ]; then
-  kill `cat $vfp_pid` || true
-fi
+pkill qemu 2>/dev/null || true
 pkill snabb || true
 
 exit  # this will call cleanup, thanks to trap set earlier (hopefully)
