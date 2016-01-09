@@ -523,7 +523,7 @@ do
     fi
   else
     echo "launch snabbnfv for \$IFNAME ..."
-    $numactl \$SNABB snabbnfv traffic $DEV \$IFNAME.cfg %s.socket
+    $numactl \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
   fi
   sleep 5
 done
@@ -628,7 +628,6 @@ do
   elif [ -f snabbvmx_manager.pl ]; then
     ./snabbvmx_manager.pl $MGMTIP /u/$IDENTITY
   fi
-  echo "\$0: waiting 5 seconds before relaunch ..."
   sleep 5
 done
 EOF
