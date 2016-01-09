@@ -196,7 +196,6 @@ function virtual_routing_engine_image {
     >&2 echo "Can't access $image via mount point. Did you specify --volume \$PWD:/u:ro ?"
    exit 1
   fi
-  cp /u/$image .
 
   # unpack images from the tar file (if it is one)
   if [[ "$image" =~ \.tgz$ ]]; then
@@ -204,7 +203,8 @@ function virtual_routing_engine_image {
     tar -zxf /u/$image -C /tmp/ --wildcards vmx*/images/*img
     vcpimage="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
   else
-    vcpimage=$image
+    cp /u/$image .
+    vcpimage=$(basename $image)
   fi
   echo $vcpimage 
 }
@@ -590,7 +590,9 @@ fi
 # launch snabb drivers, if any
 for file in launch_snabb_${INTID}*.sh
 do
-  ./$file &
+  if [ -f $file ]; then
+    ./$file &
+  fi
 done
 
 if [ -f add-license.sh ]; then
