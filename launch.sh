@@ -447,6 +447,7 @@ fi
 echo "BRMGMT=$BRMGMT VCPMGMT=$VCPMGMT"
 echo "Building virtual interfaces and bridges for $@ ..."
 
+MACP=$(printf "04:%02X:%02X:%02X" $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
 
 for DEV in $@; do # ============= loop thru interfaces start
 
@@ -468,7 +469,8 @@ for DEV in $@; do # ============= loop thru interfaces start
   if [ "12" -eq "${#DEV}" ]; then
     # add $DEV to list
     PCIDEVS="$PCIDEVS $DEV"
-    macaddr=`printf '02:49:BA:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    macaddr=$MACP:00:$(printf '%02X'  $INTNR)
+    macaddr=`cat /sys/bus/pci/drivers/ixgbe/$DEV/net/*/address || echo $macaddr`
     NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
         -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
         -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
@@ -525,7 +527,6 @@ done
 
 EOF
     chmod a+rx launch_snabb_${INTID}${INTNR}.sh
-    INTNR=$(($INTNR + 1))
 
   else
 
@@ -547,7 +548,7 @@ EOF
       # already
       BRIDGE=$DEV
       if [ ! -z "`brctl show $DEV 2>&1 | grep \"No such device\"`" ]; then
-        # doesn't exist yet. Lets create it
+        # doesnt exist yet. Lets create it
         >&2 echo "need to create bridge $BRIDGE"
         $(create_bridge $BRIDGE)
       fi
@@ -557,8 +558,6 @@ EOF
       BRIDGE="br$ID$INTNR"
       $(create_bridge $BRIDGE)
     fi
-
-#    echo "DEV=$DEV INT=$INT BRIDGE=$BRIDGE TAP=$TAP"
 
     $(addif_to_bridge $BRIDGE $TAP)
 
@@ -573,17 +572,13 @@ EOF
       INTS="$INTS $BRIDGE:$INT"
     fi
 
-    macaddr=`printf '02:49:BB:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
+    macaddr=$MACP:00:$(printf '%02X'  $INTNR)
     NETDEVS="$NETDEVS -netdev tap,id=net$INTNR,ifname=$TAP,script=no,downscript=no \
         -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
-    INTNR=$(($INTNR + 1))
-
   fi
+  INTNR=$(($INTNR + 1))
 
 done # ===================================== loop thru interfaces done
-
-macaddr1=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-macaddr2=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 
 # Check config for snabbvmx group entries. If there are any
 # run its manager to create an intial set of configs for snabbvmx 
@@ -626,11 +621,10 @@ EOF
   ./launch_snabbvmx_manager.sh &
 fi
 
-# Launch VFP
+# Launch VFP on qemu in the background
+
 if [ ! -z "$VFPIMAGE" ]; then
 
-  macaddr1=`printf '02:49:BD:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
-  macaddr2=`printf '02:49:BD:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
   vfp_pid="/var/tmp/vfp-$macaddr1.pid"
   vfp_pid=$(echo $vfp_pid | tr ":" "-")
 
@@ -648,35 +642,33 @@ if [ ! -z "$VFPIMAGE" ]; then
       -object memory-backend-file,id=mem,size=${VFPMEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
+      -device virtio-net-pci,netdev=tf0,mac=$MACP:19:01 \
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
+      -device virtio-net-pci,netdev=tf1,mac=$MACP:19:02 -pidfile $vfp_pid \
       -device isa-serial,chardev=charserial0,id=serial0 \
       -chardev socket,id=charserial0,host=0.0.0.0,port=$consoleport,telnet,server,nowait \
       $NETDEVS -vnc :$vncdisplay -daemonize
 fi
 
-# vRE
+# Launch vRE on qemu in foreground. The container terminates when this app dies
 
 if [ -z "$VFPIMAGE" ]; then
-  VCPNETDEVS="$NETDEVS"
   NUMACTL="$numactl"
   NUMA="-numa node,memdev=mem -object memory-backend-file,id=mem,size=${VCPMEM}M,mem-path=/hugetlbfs,share=on"
+  VCPNETDEVS="$NETDEVS"
 else
   NUMACTL=""
   NUMA=""
-  macaddr2=`printf '02:49:BE:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
   VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
-      -device virtio-net-pci,netdev=tc1,mac=$macaddr2"
+      -device virtio-net-pci,netdev=tc1,mac=$MACP:18:02"
 fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
-macaddr1=`printf '02:49:BE:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 $NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
-  -device e1000,netdev=tc0,mac=$macaddr1 $VCPNETDEVS -nographic
+  -device e1000,netdev=tc0,mac=$MACP:18:01 $VCPNETDEVS -nographic
 
 # ==========================================================================
 # User terminated vcp, lets kill all VM's too
