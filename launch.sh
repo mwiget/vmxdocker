@@ -46,7 +46,6 @@ docker run --name vmx1 --rm --privileged --net=host -v \$PWD:/u:ro \\
 EOF
 }
 
-
 #---------------------------------------------------------------------------
 function cleanup {
 
@@ -114,7 +113,6 @@ function cleanup {
   exit 0
 }
 #---------------------------------------------------------------------------
-
 
 function create_bridge {
   if [ -z "`brctl show|grep $11`" ]; then
@@ -229,7 +227,6 @@ function mount_hugetables {
   fi
 }
 
-
 function get_host_name_from_config {
   echo "$(grep "host-name " $1 2>/dev/null | awk '{print $2}' | cut -d';' -f1)"
 }
@@ -292,8 +289,6 @@ EOF
   cp config_drive/vmm-config.tgz /mnt
   umount /mnt
 }
-
-
 
 #==================================================================
 # main()
@@ -590,10 +585,6 @@ done # ===================================== loop thru interfaces done
 macaddr1=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 macaddr2=`printf '02:49:BC:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 
-
-echo "$RUNVCP" > runvcp.sh
-chmod a+rx runvcp.sh
-
 # Check config for snabbvmx group entries. If there are any
 # run its manager to create an intial set of configs for snabbvmx 
 sx="\$(grep ' snabbvmx-' /u/$CONFIG)"
@@ -651,18 +642,21 @@ if [ ! -z "$VFPIMAGE" ]; then
 
   consoleport=$(find_free_port 8700)
   vncdisplay=$(($(find_free_port 5901) - 5900))
+  CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
 
-  $numactl $qemu -M pc -smp $VFPVCPU --enable-kvm -cpu Broadwell -m $VFPMEM -numa node,memdev=mem \
+  $numactl $qemu -M pc -smp $VFPVCPU --enable-kvm $CPU -m $VFPMEM -numa node,memdev=mem \
       -object memory-backend-file,id=mem,size=${VFPMEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf0,mac=$macaddr1 \
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
-      -chardev socket,id=charserial0,host=127.0.0.1,port=$consoleport,telnet,server,nowait \
-      -device isa-serial,chardev=charserial0,id=serial0 \
       -device virtio-net-pci,netdev=tf1,mac=$macaddr2 -pidfile $vfp_pid \
-      $NETDEVS -vnc 127.0.0.1:$vncdisplay -daemonize
+      -device isa-serial,chardev=charserial0,id=serial0 \
+      -chardev socket,id=charserial0,host=0.0.0.0,port=$consoleport,telnet,server,nowait \
+      $NETDEVS -vnc :$vncdisplay -daemonize
 fi
+
+# vRE
 
 if [ -z "$VFPIMAGE" ]; then
   VCPNETDEVS="$NETDEVS"
@@ -671,11 +665,13 @@ if [ -z "$VFPIMAGE" ]; then
 else
   NUMACTL=""
   NUMA=""
+  macaddr2=`printf '02:49:BE:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
   VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tc1,mac=$macaddr2"
 fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
+macaddr1=`printf '02:49:BE:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256]`
 $NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
