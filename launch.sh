@@ -447,7 +447,7 @@ fi
 echo "BRMGMT=$BRMGMT VCPMGMT=$VCPMGMT"
 echo "Building virtual interfaces and bridges for $@ ..."
 
-MACP=$(printf "04:%02X:%02X:%02X" $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
+MACP=$(printf "02:%02X:%02X:%02X" $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
 
 for DEV in $@; do # ============= loop thru interfaces start
 
@@ -466,71 +466,9 @@ for DEV in $@; do # ============= loop thru interfaces start
   # a more sophisticated check to avoid confusion with long bridge or
   # interface names
 
-  if [ "12" -eq "${#DEV}" ]; then
-    # add $DEV to list
-    PCIDEVS="$PCIDEVS $DEV"
-    macaddr=$MACP:00:$(printf '%02X'  $INTNR)
-    macaddr=`cat /sys/bus/pci/drivers/ixgbe/$DEV/net/*/address || echo $macaddr`
-    NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
-        -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
-        -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
-
-    echo "$DEV" > pci_${INTID}${INTNR} 
-    echo "$macaddr" > mac_${INTID}${INTNR} 
-
-    cat > ${INTID}${INTNR}.cfg <<EOF
-return {
-  {
-    port_id = "${INTID}${INTNR}",
-    mac_address = nil
-  }
-}
-EOF
-    node=$(pci_node $DEV)
-    numactl="numactl --cpunodebind=$node --membind=$node"
-    cat > launch_snabb_${INTID}${INTNR}.sh <<EOF
-#!/bin/bash
-while :
-do
-  # check if there is a snabb binary available in the mounted directory.
-  # use that one if yes
-  SNABB=$snabb
-  if [ -f /u/snabb ]; then
-    cp /u/snabb /tmp/ 2>/dev/null
-    SNABB=/tmp/snabb
-  fi
-  # check if this port is assigned to snabbvmx-{service}-{ifname1}-{ifname2}
-  IFNAME=${INTID}${INTNR}
-  groupname="\$(grep snabbvmx /u/$CONFIG | grep \$IFNAME | awk '{print \$1}')"
-  if [ ! -z "\$groupname" ]; then
-    SERVICE="\$(echo "\$groupname" | cut -f2 -d-)"
-    IFNAME1="\$(echo "\$groupname" | cut -f3 -d-)"
-    IFNAME2="\$(echo "\$groupname" | cut -f4 -d- | cut -f1 -d' ')"
-    if [ x\$IFNAME == x\$IFNAME1 ]; then
-      if [ -z "\$IFNAME2" ]; then
-        echo "launch snabbvmx for \$IFNAME1 ..."
-        $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
-      else
-        # echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
-        sleep 30
-      fi
-    elif [ x\$IFNAME == x\$IFNAME2 ]; then
-      echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
-      $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --v2id \$IFNAME2 --v2pci \`cat pci_\$IFNAME2\` --v2mac \`cat mac_\$IFNAME2\` --sock %s.socket
-    fi
-  else
-    echo "launch snabbnfv for \$IFNAME ..."
-    $numactl \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
-  fi
-  sleep 5
-done
-
-EOF
-    chmod a+rx launch_snabb_${INTID}${INTNR}.sh
-
-  else
-
-    TAP="ge$ID$INTNR"
+  if [ ! "12" -eq "${#DEV}" ]; then
+    # not a PCI address. 
+    TAP="tap$ID$INTNR"
     $(create_tap_if $TAP)
 
     if [ -z "`ifconfig $DEV > /dev/null 2>/dev/null || echo found`" ]; then
@@ -573,9 +511,77 @@ EOF
     fi
 
     macaddr=$MACP:00:$(printf '%02X'  $INTNR)
-    NETDEVS="$NETDEVS -netdev tap,id=net$INTNR,ifname=$TAP,script=no,downscript=no \
-        -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
+    DEV=$TAP
+
+  else
+    # add $DEV to list
+    PCIDEVS="$PCIDEVS $DEV"
+    macaddr=$MACP:00:$(printf '%02X'  $INTNR)
+    macaddr=`cat /sys/bus/pci/drivers/ixgbe/$DEV/net/*/address || echo $macaddr`
   fi
+
+  NETDEVS="$NETDEVS -chardev socket,id=char$INTNR,path=./${INTID}$INTNR.socket,server \
+        -netdev type=vhost-user,id=net$INTNR,chardev=char$INTNR \
+        -device virtio-net-pci,netdev=net$INTNR,mac=$macaddr"
+
+  echo "$DEV" > pci_${INTID}${INTNR} 
+  echo "$macaddr" > mac_${INTID}${INTNR} 
+
+  cat > ${INTID}${INTNR}.cfg <<EOF
+return {
+  {
+    port_id = "${INTID}${INTNR}",
+    mac_address = nil
+  }
+}
+EOF
+
+  if [[ "$DEV" =~ "tap" ]]; then
+    node=""
+    numactl=""
+  else
+    node=$(pci_node $DEV)
+    numactl="numactl --cpunodebind=$node --membind=$node"
+  fi
+  cat > launch_snabb_${INTID}${INTNR}.sh <<EOF
+#!/bin/bash
+while :
+do
+  # check if there is a snabb binary available in the mounted directory.
+  # use that one if yes
+  SNABB=$snabb
+  if [ -f /u/snabb ]; then
+    cp /u/snabb /tmp/ 2>/dev/null
+    SNABB=/tmp/snabb
+  fi
+  # check if this port is assigned to snabbvmx-{service}-{ifname1}-{ifname2}
+  IFNAME=${INTID}${INTNR}
+  groupname="\$(grep snabbvmx /u/$CONFIG | grep \$IFNAME | awk '{print \$1}')"
+  if [ ! -z "\$groupname" ]; then
+    SERVICE="\$(echo "\$groupname" | cut -f2 -d-)"
+    IFNAME1="\$(echo "\$groupname" | cut -f3 -d-)"
+    IFNAME2="\$(echo "\$groupname" | cut -f4 -d- | cut -f1 -d' ')"
+    if [ x\$IFNAME == x\$IFNAME1 ]; then
+      if [ -z "\$IFNAME2" ]; then
+        echo "launch snabbvmx for \$IFNAME1 ..."
+        $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
+      else
+        # echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
+        sleep 30
+      fi
+    elif [ x\$IFNAME == x\$IFNAME2 ]; then
+      echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
+      $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --v2id \$IFNAME2 --v2pci \`cat pci_\$IFNAME2\` --v2mac \`cat mac_\$IFNAME2\` --sock %s.socket
+    fi
+  else
+    echo "launch snabbnfv for \$IFNAME ..."
+    $numactl \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
+  fi
+  sleep 5
+done
+EOF
+
+  chmod a+rx launch_snabb_${INTID}${INTNR}.sh
   INTNR=$(($INTNR + 1))
 
 done # ===================================== loop thru interfaces done
@@ -665,7 +671,7 @@ else
 fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
-$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
+exec $NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
