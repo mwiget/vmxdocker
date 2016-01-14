@@ -653,8 +653,8 @@ if [ ! -z "$VFPIMAGE" ]; then
       -netdev tap,id=tf1,ifname=$VFPINT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tf1,mac=$MACP:19:02 \
       -device isa-serial,chardev=charserial0,id=serial0 \
-      -chardev socket,id=charserial0,host=0.0.0.0,port=$consoleport,telnet,server,nowait \
-      $NETDEVS -vnc :$vncdisplay -daemonize
+      -chardev socket,id=charserial0,host=127.0.0.1,port=$consoleport,telnet,server,nowait \
+      $NETDEVS -vnc 127.0.0.1:$vncdisplay -daemonize
 fi
 
 # Launch vRE on qemu in foreground. The container terminates when this app dies
