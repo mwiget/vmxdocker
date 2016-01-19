@@ -10,7 +10,7 @@ RUN apt-get install -y --no-install-recommends build-essential git ca-certificat
   libqtcore4 libusbredirhost1 qtcore4-l10n spice-client-glib-usb-acl-helper sshpass openssh-client rsync psmisc \
   glib-2.0 libglib2.0-dev libsdl1.2debian libsdl1.2-dev libaio-dev libcap-dev \
   libattr1-dev libpixman-1-dev libncurses5 libncurses5-dev libspice-server1 \
-  && git clone -b vmx_olive https://github.com/mwiget/snabbswitch.git \
+  && git clone -b vmx_rambutan https://github.com/mwiget/snabbswitch.git \
   && cd snabbswitch && make -j && make install && make clean && cd .. \
   && cp snabbswitch/src/program/snabbvmx/manager/snabbvmx_manager.pl / \
   && chmod a+rx snabbvmx_manager.pl \
