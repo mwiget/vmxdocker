@@ -12,15 +12,13 @@ RUN apt-get install -y --no-install-recommends build-essential git ca-certificat
   libattr1-dev libpixman-1-dev libncurses5 libncurses5-dev libspice-server1 \
   && git clone -b vmx_rambutan https://github.com/mwiget/snabbswitch.git \
   && cd snabbswitch && make -j && make install && make clean && cd .. \
-  && cp snabbswitch/src/program/snabbvmx/manager/snabbvmx_manager.pl / \
-  && chmod a+rx snabbvmx_manager.pl \
   && git clone -b v2.4.0-snabb --depth 50 https://github.com/SnabbCo/qemu && \
   cd qemu && ./configure --target-list=x86_64-softmmu && make -j && make install \
   && apt-get purge -y build-essential git ca-certificates libncurses5-dev glib-2.0 \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* /snabbswitch /qemu
 
-COPY launch.sh README.md /
+COPY launch.sh README.md snabbvmx_manager.pl /
 
 ENTRYPOINT ["/launch.sh"]
 
