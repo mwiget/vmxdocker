@@ -76,6 +76,8 @@ sub process_new_config {
       print LWA "aftr_ipv6_ip = $1,\n";
       print LWA "aftr_mac_inet_side = $mac2,\n";
       print LWA "inet_mac = 66:66:66:66:66:66,\n";
+    } elsif ($_ =~ /next_hop_mac ([\w.:-]+)/) {
+      print CFG "    next_hop_mac = \"$1\",\n";
     } elsif ($_ =~ /service_mac ([\w.:-]+)/) {
       print CFG "    service_mac = \"$1\",\n";
     } elsif ($_ =~ /ipv4_address ([\w.]+)/) {
@@ -147,9 +149,11 @@ sub process_new_config {
   # compare the generated files and kick snabbvmx accordingly!
   my $signal="";   # default is no change, no signal needed
   if (&file_changed($snabbvmx_binding_file) > 0) {
-    print("Binding table changed. Recompiling ...\n");
-    `/usr/local/bin/snabb snabbvmx lwaftr -D 0 --conf $snabbvmx_config_file --v1pci 0000:00:00.0 --v2pci 0000:00:00.0 --v1mac 02:AA:AA:AA:AA:AA --v2mac 02:AA:AA:AA:AA:AA`;
+    $node=0;
+    print("Binding table changed. Recompiling on node $node...\n");
+    `numactl --cpunodebind=$node --membind=$node /usr/local/bin/snabb snabbvmx lwaftr -D 0 --conf $snabbvmx_config_file --v1pci 0000:00:00.0 --v2pci 0000:00:00.0 --v1mac 02:AA:AA:AA:AA:AA --v2mac 02:AA:AA:AA:AA:AA`;
     print("Recompiling complete. Signaling running snabbvmx ...\n");
+    `/usr/local/bin/snabb gc`;  # removing stale counters 
     $signal='HUP';
   }
   if (&file_changed($snabbvmx_config_file) +

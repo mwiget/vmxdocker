@@ -8,7 +8,7 @@ function show_help {
   cat <<EOF
 Usage:
 
-docker run --name <name> --rm [--volume \$PWD:/u:ro] \\
+docker run --name <name> --rm -v \$PWD:/u:ro \\
    --privileged -i -t marcelwiget/vmx[:version] \\
    -c <junos_config_file> [-l license_file] [-i identity] \\
    [-m <kbytes>] [-v <vcpu count>] <image> <pci-address> [<pci-address> ...]
@@ -25,8 +25,12 @@ docker run --name <name> --rm [--volume \$PWD:/u:ro] \\
  -l  license_file to be loaded at startup (requires user snabbvmx with ssh
      private key given via option -i)
 
- -v  Specify the number of virtual CPU's
- -m  Specify the amount of memory
+ -f  fxp0 mgmt bridge to use (defaults to docker0, requires --net=host)
+
+ -V  number of virtual CPU's for the vRE
+ -v  number of virtual CPU's for the vPFE
+ -M  Specify the amount of memory for the vRE
+ -m  Specify the amount of memory for the vPFE
  -d  enable debug messages during startup
 
 <pci-address>    PCI Address of the Intel 825999 based 10GE port
@@ -149,7 +153,8 @@ function pci_node {
   case "$1" in
     *:*:*.*)
       cpu=$(cat /sys/class/pci_bus/${1%:*}/cpulistaffinity | cut -d "-" -f 1)
-      numactl -H | grep "cpus: $cpu" | cut -d " " -f 2
+#      numactl -H | grep "cpus: $cpu" | cut -d " " -f 2
+      echo "0"
       ;;
     *)
       echo $1
@@ -296,15 +301,21 @@ EOF
 echo "Juniper Networks vMX Docker Container (unsupported prototype)"
 echo ""
 DEBUG=0
-while getopts "h?c:m:v:l:i:d" opt; do
+while getopts "h?c:M:m:V:v:l:i:f:d" opt; do
   case "$opt" in
     h|\?)
       show_help
       exit 1
       ;;
-    v)  VCPU=$OPTARG
+    f)  BRMGMT=$OPTARG
       ;;
-    m)  MEM=$OPTARG
+    V)  VCPVCPU=$OPTARG
+      ;;
+    v)  VFPVCPU=$OPTARG
+      ;;
+    M)  VCPMEM=$OPTARG
+      ;;
+    m)  VFPMEM=$OPTARG
       ;;
     c)  CONFIG=$OPTARG
       ;;
@@ -337,10 +348,14 @@ VCPIMAGE=$(virtual_routing_engine_image $image)
 
 # if a tar file was given, above func will have extracted the image into /tmp
 VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img 2>/dev/null`" || true   # its ok not to have one ..
+VCPMEM="${VCPMEM:-16000}"
+VCPVCPU="${VCPVCPU:-2}"
+
+VFPMEM="${VFPMEM:-8000}"
+VFPVCPU="${VFPVCPU:-3}"
+
 if [ -z "$VFPIMAGE" ]; then
   echo "Running in vRR mode (without vPFE)"
-  VCPMEM="${MEM:-2000}"
-  VCPVCPU="${VCPU:-1}"
   echo "Creating empty vmxhdd.img for vRE ..."
   qemu-img create -f qcow2 /tmp/vmxhdd.img 2G >/dev/null
   HDDIMAGE="/tmp/vmxhdd.img"
@@ -349,10 +364,6 @@ if [ -z "$VFPIMAGE" ]; then
   INTNR=1	# added to each tap interface to make them unique
   INTID="em"
 else
-  VCPMEM=2000
-  VCPVCPU=1
-  VFPMEM="${MEM:-8000}"
-  VFPVCPU="${VCPU:-3}"
   HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
   RETYPE="RE-VMX"
   SMBIOS="-smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
@@ -363,7 +374,9 @@ fi
 NAME=$(get_host_name_from_config /u/$CONFIG)
 MGMTIP=$(get_mgmt_ip /u/$CONFIG)
 
-BRMGMT=$(create_mgmt_bridge)
+if [ -z "$BRMGMT" ]; then
+  BRMGMT=$(create_mgmt_bridge)
+fi
 
 if [ $DEBUG -gt 0 ]; then
   cat <<EOF
@@ -397,8 +410,9 @@ while true; do
   echo "sleeping 5 seconds ..."
   sleep 5
 done
-echo "loading license file ..."
-ssh -o StrictHostKeyChecking=no -i /u/$IDENTITY snabbvmx@$MGMTIP "request system license add $LICENSE"
+FILE=`basename $LICENSE`
+echo "loading license file \$FILE ..."
+ssh -o StrictHostKeyChecking=no -i /u/$IDENTITY snabbvmx@$MGMTIP "request system license add \$FILE"
 if [ ! \$? == 0 ]; then
   echo "command failed"
   sleep 600
@@ -577,6 +591,7 @@ do
     echo "launch snabbnfv for \$IFNAME ..."
     $numactl \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
   fi
+  \$SNABB gc # removing stale runtime files created by Snabb
   sleep 5
 done
 EOF
@@ -671,11 +686,13 @@ else
 fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
-exec $NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
+$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
   -device e1000,netdev=tc0,mac=$MACP:18:01 $VCPNETDEVS -nographic
+
+exit 0
 
 # ==========================================================================
 # User terminated vcp, lets kill all VM's too
