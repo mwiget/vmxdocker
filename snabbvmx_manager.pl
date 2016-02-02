@@ -168,7 +168,31 @@ sub process_new_config {
 }
 
 sub check_config {
-  `/usr/bin/ssh -o StrictHostKeyChecking=no -i $identity snabbvmx\@$ip show conf groups > /tmp/config.new`;
+  `/usr/bin/ssh -o StrictHostKeyChecking=no -i $identity snabbvmx\@$ip show conf groups > /tmp/config.new1`;
+
+  my $newfile = "/tmp/config.new";
+  open NEW, ">$newfile" || die "can't write to file $newfile";
+  open IP, "/tmp/config.new1" || die "can't open file /tmp/config.new1";
+  my $file;
+  while (<IP>) {
+    if ($_ =~ /binding_table_file\s+([\w.]+)/) {
+      $file=$1;
+      print("getting file $file from $ip ...\n");
+      my $f="/var/db/scripts/commit/$file";
+      `/usr/bin/scp -o StrictHostKeyChecking=no -i $identity snabbvmx\@$ip:$f .`;
+      print("reading file $file ...\n");
+      open R, "$file" || die "can't open file $file";
+      while (<R>) {
+        print NEW $_;
+      }
+      close R;
+    } else {
+      print NEW $_;
+    }
+  }
+  close IP;
+  close NEW;
+
   my $delta = `/usr/bin/diff /tmp/config.new /tmp/config.old 2>&1`;
   if ($delta eq "") {
     print("snabbvmx_manager: no config change related to snabbvmx found\n");
@@ -182,7 +206,26 @@ sub check_config {
 
 #===============================================================
 if ("" eq $identity && -f $ip) {
-  &process_new_config($ip);
+  my $newfile = "/tmp/$ip.new";
+  open NEW, ">$newfile" || die "can't write to file $newfile";
+  open IP, "$ip" || die "can't open file $ip";
+  my $file;
+  while (<IP>) {
+    if ($_ =~ /binding_table_file\s+([\w.]+)/) {
+      $file=$1;
+      print("reading file $file ...\n");
+      open R, "$file" || die "can't open file $file";
+      while (<R>) {
+        print NEW $_;
+      }
+      close R;
+    } else {
+      print NEW $_;
+    }
+  }
+  close IP;
+  close NEW;
+  &process_new_config($newfile);
   exit(0);
 }
 
