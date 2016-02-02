@@ -206,7 +206,7 @@ sub check_config {
 
 #===============================================================
 if ("" eq $identity && -f $ip) {
-  my $newfile = "/tmp/$ip.new";
+  my $newfile = "/tmp/newfile";
   open NEW, ">$newfile" || die "can't write to file $newfile";
   open IP, "$ip" || die "can't open file $ip";
   my $file;
