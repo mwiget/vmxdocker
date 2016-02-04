@@ -9,7 +9,7 @@ function show_help {
 Usage:
 
 docker run --name <name> --rm -v \$PWD:/u:ro \\
-   --privileged -i -t marcelwiget/vmx[:version] \\
+   --privileged -i -t marcelwiget/vmx[:version] [-C <core>] \\
    -c <junos_config_file> [-l license_file] [-i identity] \\
    [-m <kbytes>] [-v <vcpu count>] <image> <pci-address> [<pci-address> ...]
 
@@ -31,6 +31,8 @@ docker run --name <name> --rm -v \$PWD:/u:ro \\
  -v  number of virtual CPU's for the vPFE
  -M  Specify the amount of memory for the vRE
  -m  Specify the amount of memory for the vPFE
+ -C  pin snabb to a specific core (in taskset -c format)
+ -R  pin vPFE/vRR to specific cores (in taskset -c format)
  -d  enable debug messages during startup
 
 <pci-address>    PCI Address of the Intel 825999 based 10GE port
@@ -147,19 +149,6 @@ function create_tap_if {
 
 function delete_tap_if {
   ip tuntap del mode tap dev $1
-}
-
-function pci_node {
-  case "$1" in
-    *:*:*.*)
-      cpu=$(cat /sys/class/pci_bus/${1%:*}/cpulistaffinity | cut -d "-" -f 1)
-#      numactl -H | grep "cpus: $cpu" | cut -d " " -f 2
-      echo "0"
-      ;;
-    *)
-      echo $1
-      ;;
-  esac
 }
 
 function find_free_port {
@@ -301,13 +290,19 @@ EOF
 echo "Juniper Networks vMX Docker Container (unsupported prototype)"
 echo ""
 DEBUG=0
-while getopts "h?c:M:m:V:v:l:i:f:d" opt; do
+tasksetS=""
+tasksetR=""
+while getopts "h?c:M:m:V:v:l:i:f:C:R:d" opt; do
   case "$opt" in
     h|\?)
       show_help
       exit 1
       ;;
     f)  BRMGMT=$OPTARG
+      ;;
+    C)  tasksetS="taskset -c $OPTARG"
+      ;;
+    R)  tasksetR="taskset -c $OPTARG"
       ;;
     V)  VCPVCPU=$OPTARG
       ;;
@@ -330,6 +325,8 @@ done
 
 shift "$((OPTIND-1))"
 
+echo "taskset for snabb   : $tasksetS"
+echo "taskset for vPFE/vRR: $tasksetR"
 # first parameter is the vMX tar file or VM image, http/https URL is fine too
 # if its missing, docker seems to put the container image name in $1, check
 # for it and print the help message and exit
@@ -373,6 +370,11 @@ fi
 
 NAME=$(get_host_name_from_config /u/$CONFIG)
 MGMTIP=$(get_mgmt_ip /u/$CONFIG)
+if [[ $MGMTIP == *":"* ]]; then
+  MGMTIPSCP="[$MGMTIP]"
+else
+  MGMTIPSCP=$MGMTIP
+fi
 
 if [ -z "$BRMGMT" ]; then
   BRMGMT=$(create_mgmt_bridge)
@@ -402,7 +404,7 @@ if [ -f /u/$LICENSE ]; then
     cat > add-license.sh <<EOF
 #!/bin/bash
 while true; do
-  scp -o StrictHostKeyChecking=no -i /u/$IDENTITY /u/$LICENSE snabbvmx@$MGMTIP:
+  scp -o StrictHostKeyChecking=no -i /u/$IDENTITY /u/$LICENSE snabbvmx@$MGMTIPSCP:
   if [ \$? == 0 ]; then
     echo "transfer successful"
     break;
@@ -550,13 +552,6 @@ return {
 }
 EOF
 
-  if [[ "$DEV" =~ "tap" ]]; then
-    node=""
-    numactl=""
-  else
-    node=$(pci_node $DEV)
-    numactl="numactl --cpunodebind=$node --membind=$node"
-  fi
   cat > launch_snabb_${INTID}${INTNR}.sh <<EOF
 #!/bin/bash
 while :
@@ -578,18 +573,18 @@ do
     if [ x\$IFNAME == x\$IFNAME1 ]; then
       if [ -z "\$IFNAME2" ]; then
         echo "launch snabbvmx for \$IFNAME1 ..."
-        $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
+        $tasksetS \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --sock %s.socket
       else
         # echo "port in use by snabbvmx. Sleeping for 30 seconds ..."
         sleep 30
       fi
     elif [ x\$IFNAME == x\$IFNAME2 ]; then
       echo "launch snabbvmx for \$IFNAME1 and \$IFNAME2 ..."
-      $numactl \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --v2id \$IFNAME2 --v2pci \`cat pci_\$IFNAME2\` --v2mac \`cat mac_\$IFNAME2\` --sock %s.socket
+      $tasksetS \$SNABB snabbvmx \$SERVICE --conf \${groupname}.cfg --v1id \$IFNAME1 --v1pci \`cat pci_\$IFNAME1\` --v1mac \`cat mac_\$IFNAME1\` --v2id \$IFNAME2 --v2pci \`cat pci_\$IFNAME2\` --v2mac \`cat mac_\$IFNAME2\` --sock %s.socket
     fi
   else
     echo "launch snabbnfv for \$IFNAME ..."
-    $numactl \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
+    $tasksetS \$SNABB snabbnfv traffic -D 0 -k 0 -l 0  $DEV \$IFNAME.cfg %s.socket
   fi
   \$SNABB gc # removing stale runtime files created by Snabb
   sleep 5
@@ -648,9 +643,6 @@ fi
 
 if [ ! -z "$VFPIMAGE" ]; then
 
-  # we borrow the last $numactl in case of 10G ports. If there wasn't one
-  # then this will be simply empty
-
   if [ ! -z "`cat /proc/cpuinfo|grep f16c|grep fsgsbase`" ]; then
     CPU="-cpu SandyBridge,+rdrand,+fsgsbase,+f16c"
   else
@@ -660,7 +652,7 @@ if [ ! -z "$VFPIMAGE" ]; then
   consoleport=$(find_free_port 8700)
   vncdisplay=$(($(find_free_port 5901) - 5900))
 
-  $numactl $qemu -M pc -smp $VFPVCPU --enable-kvm $CPU -m $VFPMEM -numa node,memdev=mem \
+  $tasksetR $qemu -M pc -smp $VFPVCPU --enable-kvm $CPU -m $VFPMEM -numa node,memdev=mem \
       -object memory-backend-file,id=mem,size=${VFPMEM}M,mem-path=/hugetlbfs,share=on \
       -drive if=ide,file=$VFPIMAGE \
       -netdev tap,id=tf0,ifname=$VFPMGMT,script=no,downscript=no \
@@ -675,18 +667,18 @@ fi
 # Launch vRE on qemu in foreground. The container terminates when this app dies
 
 if [ -z "$VFPIMAGE" ]; then
-  NUMACTL="$numactl"
+  TASKSET=""
   NUMA="-numa node,memdev=mem -object memory-backend-file,id=mem,size=${VCPMEM}M,mem-path=/hugetlbfs,share=on"
   VCPNETDEVS="$NETDEVS"
 else
-  NUMACTL=""
+  TASKSET="$tasksetR"
   NUMA=""
   VCPNETDEVS="-netdev tap,id=tc1,ifname=$VCPINT,script=no,downscript=no \
       -device virtio-net-pci,netdev=tc1,mac=$MACP:18:02"
 fi
 
 METADATA="-usb -usbdevice disk:format=raw:metadata.img"
-$NUMACTL $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
+$TASKSET $qemu -M pc -smp $VCPVCPU --enable-kvm -cpu host -m $VCPMEM $NUMA \
   $SMBIOS -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \

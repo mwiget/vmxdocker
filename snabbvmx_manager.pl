@@ -151,7 +151,7 @@ sub process_new_config {
   if (&file_changed($snabbvmx_binding_file) > 0) {
     $node=0;
     print("Binding table changed. Recompiling on node $node...\n");
-    `numactl --cpunodebind=$node --membind=$node /usr/local/bin/snabb snabbvmx lwaftr -D 0 --conf $snabbvmx_config_file --v1pci 0000:00:00.0 --v2pci 0000:00:00.0 --v1mac 02:AA:AA:AA:AA:AA --v2mac 02:AA:AA:AA:AA:AA`;
+    `numactl --physcpubind 0 /usr/local/bin/snabb snabbvmx lwaftr -D 0 --conf $snabbvmx_config_file --v1pci 0000:00:00.0 --v2pci 0000:00:00.0 --v1mac 02:AA:AA:AA:AA:AA --v2mac 02:AA:AA:AA:AA:AA`;
     print("Recompiling complete. Signaling running snabbvmx ...\n");
     `/usr/local/bin/snabb gc`;  # removing stale counters 
     $signal='HUP';
