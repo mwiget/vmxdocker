@@ -135,7 +135,11 @@ Optional. If set to "lite", the lite version of the vPFE is used, even if
 the CPU would allow the use of the high performance vPFE image from the
 provided vMX distribution tar file.
 
+<<<<<<< HEAD
 --env VCPMEM="<megabytes>"   
+=======
+--env VCPMEM="<megabytes>"
+>>>>>>> 211f9a8294d7e7d08d784101baa9fc81dcaedec9
 Optional. set the amount of memeory in MB given to the vRE image.
 default is 2000 (16.1F requires only 1G).  
 
