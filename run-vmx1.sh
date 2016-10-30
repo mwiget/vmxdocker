@@ -1,5 +1,5 @@
 #!/bin/bash
-sudo docker run --name vmx1 --rm --privileged --net=host \
+docker run --name vmx1 --rm --privileged --net=host \
   -v $PWD:/u:ro \
   --env TAR="vmx-bundle-16.1R2.11.tgz" \
   --env CFG="vmx1.cfg" \
