@@ -57,6 +57,7 @@ $ docker run --name vmx1 --rm --privileged --net=host \
   --env CFG="vmx1.cfg" \
   --env CONFIG="vmx1-conf.txt" \
   --env DEV="br0 br0" \
+  --env VPCMEM="2000" \
   -i -t marcelwiget/vmx:latest
 ```
 
@@ -134,7 +135,7 @@ Optional. If set to "lite", the lite version of the vPFE is used, even if
 the CPU would allow the use of the high performance vPFE image from the
 provided vMX distribution tar file.
 
---env VCPMEM="<megabytes>"
+--env VCPMEM="<megabytes>"    
 Optional. set the amount of memeory in MB given to the vRE image.
 default is 2000 (16.1F requires only 1G).  
 
