@@ -3,6 +3,7 @@
 echo "Juniper Networks vMX Docker Container (unsupported prototype)"
 echo ""
 
+
 set -e	#  Exit immediately if a command exits with a non-zero status.
 
 #export qemu=/qemu/x86_64-softmmu/qemu-system-x86_64
@@ -38,7 +39,9 @@ if [ "2500" -gt "$HUGEPAGES" ]; then
 fi
 echo " ok ($HUGEPAGES)"
 
-vcpmem=2000
+#This is not true anymore, as some releases have different VCP mem. 
+#so lets do it differently. Default it will be 2000; however, trying to get right one.
+VCPMEM="${VCPMEM:-2000}"
 MEM="${MEM:-8000}"
 VCPU="${VCPU:-7}"
 
@@ -389,7 +392,8 @@ echo "=================================="
 
 if [ ! -z "$TAR" ]; then
   echo -n "extracting VM's from $TAR ... "
-  tar -zxf /u/$TAR -C /tmp/ --wildcards vmx*/images/*img
+  # adding qcow2 as well for 16.1+
+  tar -zxf /u/$TAR -C /tmp/ --wildcards vmx*/images/*qcow2 --wildcards vmx*/images/*img
   echo ""
   HDDIMAGE="`ls /tmp/vmx*/images/vmxhdd.img`"
 else
@@ -402,16 +406,21 @@ if [ ! -z "$VCP" ]; then
   cp /u/$VCP .
   VCPIMAGE="$VCP"
 else
-  VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img`"
+  VCPIMAGE="`ls /tmp/vmx*/images/jinstall64-vmx*img 2> /dev/null`" || true
+  if [ -z $VCPIMAGE ]; then   #it is ok, as 16.1+ has *.qcow2
+   echo "`ls /tmp/vmx*/images/*`" 
+   VCPIMAGE="`ls /tmp/vmx*/images/junos-vmx*qcow2 2> /dev/null`" || true
+
+  fi
 fi
 
-VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img`" || true   # its ok not to have one ..
+VFPIMAGE="`ls /tmp/vmx*/images/vFPC*img 2> /dev/null`" || true   # its ok not to have one ..
 if [ -z "$VFPIMAGE" ]; then
   # not a 15.1F image, so lets see if we find the 14.1 based vPFE image ...
-  VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img`"
+  VFPIMAGE="`ls /tmp/vmx*/images/vPFE-lite-*img 2> /dev/null`" || true
   # This will allow the use of the high performance image if
   if [ ! -z "$CPU" -a  ".lite" != ".$PFE" ]; then
-    VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img`"
+    VFPIMAGE="`ls /tmp/vmx*/images/vPFE-2*img 2> /dev/null`" || true
   fi
 fi
 
@@ -451,8 +460,8 @@ cp config_drive/vmm-config.tgz /mnt
 umount /mnt
 METADATA="-usb -usbdevice disk:format=raw:metadata.img -smbios type=0,vendor=Juniper -smbios type=1,manufacturer=Juniper,product=VM-vcp_vmx2-161-re-0,version=0.1.0"
 
-if [ ! -f $VCPIMAGE ]; then
-  echo "Can't find jinstall64-vmx*img in tar file"
+if [ -z $VCPIMAGE ] || [ ! -f $VCPIMAGE ]; then
+  echo "Can't find jinstall64-vmx*img or junos-vmx*qcow2 in tar file"
   exit 1
 fi
 
@@ -491,7 +500,7 @@ vcp_pid=$(echo $vcp_pid | tr ":" "-")
 consoleport=$(find_free_port 8700)
 vncdisplay=$(($(find_free_port 5901) - 5900))
 
-RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $vcpmem \
+RUNVCP="$qemu -M pc -smp 1 --enable-kvm -cpu host -m $VCPMEM \
   -drive if=ide,file=$VCPIMAGE -drive if=ide,file=$HDDIMAGE $METADATA \
   -device cirrus-vga,id=video0,bus=pci.0,addr=0x2 \
   -netdev tap,id=tc0,ifname=$VCPMGMT,script=no,downscript=no \
