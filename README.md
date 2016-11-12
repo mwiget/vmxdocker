@@ -57,7 +57,7 @@ $ docker run --name vmx1 --rm --privileged --net=host \
   --env CFG="vmx1.cfg" \
   --env CONFIG="vmx1-conf.txt" \
   --env DEV="br0 br0" \
-  --env VPCMEM="2000" \
+  --env VCPMEM="2000" \
   -i -t marcelwiget/vmx:latest
 ```
 
