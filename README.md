@@ -1,6 +1,6 @@
 ## Run Juniper Networks vMX in a Docker Container 
 
-> WARNING: I no longer maintain this project. It served me well in the early days of vMX 14.x and 15.x and ultimately led to the creation of the vMX based lightweight 4over6 solution: https://github.com/Juniper/vmx-docker-lwaftr
+> WARNING: I no longer maintain this project. It served me well in the early days of vMX 14.x and 15.x and ultimately led to the creation of the vMX based lightweight 4over6 solution: https://github.com/Juniper/vmx-docker-lwaftr and a general purpose method to launch vMX within a Container: https://github.com/juniper/openJNPR-container-vMX.
 
 ### Overview
 
